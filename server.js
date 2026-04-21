@@ -13,7 +13,21 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 // NVIDIA NIM API configuration
 const NIM_API_BASE = process.env.NIM_API_BASE || 'https://integrate.api.nvidia.com/v1';
 const NIM_API_KEY = process.env.NIM_API_KEY;
+const PROXY_API_KEY = process.env.PROXY_API_KEY || 'change-this-secret';
 
+app.use((req, res, next) => {
+  if (req.path === '/health') return next(); // allow health check without auth
+  
+  const authHeader = req.headers['authorization'];
+  const key = authHeader?.replace('Bearer ', '').trim();
+  
+  if (key !== PROXY_API_KEY) {
+    return res.status(401).json({
+      error: { message: 'Invalid API key', type: 'invalid_request_error', code: 401 }
+    });
+  }
+  next();
+});
 // 🔥 REASONING DISPLAY TOGGLE - Shows/hides reasoning in output
 const SHOW_REASONING = false; // Set to true to show reasoning with <think> tags
 
