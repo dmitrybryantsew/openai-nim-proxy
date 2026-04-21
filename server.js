@@ -93,23 +93,27 @@ app.post('/v1/chat/completions', async (req, res) => {
     }
     
     // Transform OpenAI request to NIM format
-    const nimRequest = {
-      model: nimModel,
-      messages: messages,
-      temperature: temperature || 0.6,
-      max_tokens: max_tokens || 9024,
-      extra_body: ENABLE_THINKING_MODE ? { chat_template_kwargs: { thinking: true } } : undefined,
-      stream: stream || false
-    };
-    
+const nimRequest = {
+  model: nimModel,
+  messages: messages,
+  temperature: temperature || 1.0,
+  max_tokens: max_tokens || 160384,
+  top_p: 1.0,
+  stream: stream || true
+};
+    // Add thinking at top level (not inside extra_body)
+  if (ENABLE_THINKING_MODE) {
+    nimRequest.chat_template_kwargs = { thinking: true };
+  }
     // Make request to NVIDIA NIM API
     const response = await axios.post(`${NIM_API_BASE}/chat/completions`, nimRequest, {
-      headers: {
-        'Authorization': `Bearer ${NIM_API_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      responseType: stream ? 'stream' : 'json'
-    });
+  headers: {
+    'Authorization': `Bearer ${NIM_API_KEY}`,
+    'Content-Type': 'application/json',
+    'Accept': stream ? 'text/event-stream' : 'application/json'  // 👈 add this
+  },
+  responseType: stream ? 'stream' : 'json'
+});
     
     if (stream) {
       // Handle streaming response with reasoning
