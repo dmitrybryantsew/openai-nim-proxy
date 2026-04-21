@@ -24,14 +24,15 @@ const ENABLE_THINKING_MODE = false; // Set to true to enable chat_template_kwarg
 const MODEL_MAPPING = {
   'gpt-3.5-turbo': 'nvidia/llama-3.1-nemotron-ultra-253b-v1',
   'gpt-4': 'qwen/qwen3-coder-480b-a35b-instruct',
-  'gpt-4-turbo': 'moonshotai/kimi-k2-instruct',      
+  'gpt-4-turbo': 'moonshotai/kimi-k2-instruct',        // ✅ fixed: removed -0905 suffix
   'gpt-4o': 'deepseek-ai/deepseek-v3.1',
   'claude-3-opus': 'openai/gpt-oss-120b',
   'claude-3-sonnet': 'openai/gpt-oss-20b',
   'gemini-pro': 'qwen/qwen3-next-80b-a3b-thinking',
+  // ✅ Direct passthroughs for all Kimi variants
   'moonshotai/kimi-k2.5': 'moonshotai/kimi-k2.5',
-  'moonshotai/kimi-k2-instruct': 'moonshotai/kimi-k2-instruct',   
-  'moonshotai/kimi-k2-thinking': 'moonshotai/kimi-k2-thinking'   
+  'moonshotai/kimi-k2-instruct': 'moonshotai/kimi-k2-instruct',
+  'moonshotai/kimi-k2-thinking': 'moonshotai/kimi-k2-thinking',
 };
 
 // Health check endpoint
@@ -93,31 +94,35 @@ app.post('/v1/chat/completions', async (req, res) => {
         }
       }
     }
+
+    const isStreaming = stream || false;
     
     // Transform OpenAI request to NIM format
-const nimRequest = {
-  model: nimModel,
-  messages: messages,
-  temperature: temperature || 1.0,
-  max_tokens: max_tokens || 160384,
-  top_p: 1.0,
-  stream: stream || true
-};
+    const nimRequest = {
+      model: nimModel,
+      messages: messages,
+      temperature: temperature || 1.0,
+      max_tokens: max_tokens || 16384,
+      top_p: 1.0,
+      stream: isStreaming
+    };
+
     // Add thinking at top level (not inside extra_body)
-  if (ENABLE_THINKING_MODE) {
-    nimRequest.chat_template_kwargs = { thinking: true };
-  }
+    if (ENABLE_THINKING_MODE) {
+      nimRequest.chat_template_kwargs = { thinking: true };
+    }
+
     // Make request to NVIDIA NIM API
     const response = await axios.post(`${NIM_API_BASE}/chat/completions`, nimRequest, {
-  headers: {
-    'Authorization': `Bearer ${NIM_API_KEY}`,
-    'Content-Type': 'application/json',
-    'Accept': stream ? 'text/event-stream' : 'application/json'  // 👈 add this
-  },
-  responseType: stream ? 'stream' : 'json'
-});
+      headers: {
+        'Authorization': `Bearer ${NIM_API_KEY}`,
+        'Content-Type': 'application/json',
+        'Accept': isStreaming ? 'text/event-stream' : 'application/json'
+      },
+      responseType: isStreaming ? 'stream' : 'json'
+    });
     
-    if (stream) {
+    if (isStreaming) {
       // Handle streaming response with reasoning
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
