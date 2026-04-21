@@ -108,10 +108,10 @@ app.post('/v1/chat/completions', async (req, res) => {
     };
 
     // Add thinking at top level (not inside extra_body)
-    if (ENABLE_THINKING_MODE) {
-      nimRequest.chat_template_kwargs = { thinking: true };
-    }
-
+    if (ENABLE_THINKING_MODE || nimModel === 'moonshotai/kimi-k2.5') {
+  nimRequest.chat_template_kwargs = { thinking: true };
+}
+    
     // Make request to NVIDIA NIM API
     const response = await axios.post(`${NIM_API_BASE}/chat/completions`, nimRequest, {
       headers: {
