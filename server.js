@@ -44,7 +44,7 @@ const MODEL_MAPPING = {
   'claude-3-sonnet': 'openai/gpt-oss-20b',
   'gemini-pro': 'qwen/qwen3-next-80b-a3b-thinking',
   // ✅ Direct passthroughs for all Kimi variants
-  'moonshotai/kimi-k2.5': 'moonshotai/kimi-k2.5',
+  'moonshotai/kimi-k2.6': 'moonshotai/kimi-k2.6',
   'moonshotai/kimi-k2-instruct': 'moonshotai/kimi-k2-instruct',
   'moonshotai/kimi-k2-thinking': 'moonshotai/kimi-k2-thinking',
 };
