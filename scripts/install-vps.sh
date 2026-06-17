@@ -48,6 +48,7 @@ fi
 
 cd "$APP_DIR"
 npm ci --omit=dev
+install -d -o "$APP_USER" -g "$APP_USER" "$APP_DIR/data"
 
 if [[ ! -f "$APP_DIR/.env" ]]; then
   if [[ -z "$PROXY_API_KEY" || -z "$NIM_API_KEY" ]]; then
