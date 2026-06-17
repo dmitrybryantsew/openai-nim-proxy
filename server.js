@@ -22,6 +22,10 @@ const providers = {
     apiBase: trimTrailingSlash(process.env.NIM_API_BASE || 'https://integrate.api.nvidia.com/v1'),
     apiKey: process.env.NIM_API_KEY,
   },
+  chutes: {
+    apiBase: trimTrailingSlash(process.env.CHUTES_API_BASE || 'https://llm.chutes.ai/v1'),
+    apiKey: process.env.CHUTES_API_KEY,
+  },
   openrouter: {
     apiBase: trimTrailingSlash(process.env.OPENROUTER_API_BASE || 'https://openrouter.ai/api/v1'),
     apiKey: process.env.OPENROUTER_API_KEY,
@@ -39,6 +43,8 @@ const registry = createModelRegistry({
   nimApiBase: providers.nim.apiBase,
   nimApiKey: providers.nim.apiKey,
   nimFeaturedModels: NIM_FEATURED_MODELS,
+  chutesApiBase: providers.chutes.apiBase,
+  chutesApiKey: providers.chutes.apiKey,
   openRouterApiBase: providers.openrouter.apiBase,
   openRouterApiKey: providers.openrouter.apiKey,
   openRouterIncludePaid: providers.openrouter.includePaid,
@@ -77,6 +83,10 @@ app.get('/health', (_req, res) => {
       nim: {
         api_base: providers.nim.apiBase,
         api_key_configured: Boolean(providers.nim.apiKey),
+      },
+      chutes: {
+        api_base: providers.chutes.apiBase,
+        api_key_configured: Boolean(providers.chutes.apiKey),
       },
       openrouter: {
         api_base: providers.openrouter.apiBase,
@@ -185,6 +195,7 @@ app.use((error, _req, res, _next) => {
 app.listen(PORT, () => {
   console.log(`openai-nim-proxy listening on http://localhost:${PORT}`);
   console.log(`NVIDIA API base: ${providers.nim.apiBase}`);
+  console.log(`Chutes API base: ${providers.chutes.apiBase}`);
   console.log(`OpenRouter API base: ${providers.openrouter.apiBase}`);
   console.log(`Model cache: ${MODEL_CACHE_FILE}`);
 });
@@ -457,6 +468,14 @@ function buildProviderHeaders(provider, stream) {
   if (provider === 'nim') {
     return {
       Authorization: `Bearer ${providers.nim.apiKey}`,
+      'Content-Type': 'application/json',
+      Accept: stream ? 'text/event-stream' : 'application/json',
+    };
+  }
+
+  if (provider === 'chutes') {
+    return {
+      Authorization: `Bearer ${providers.chutes.apiKey}`,
       'Content-Type': 'application/json',
       Accept: stream ? 'text/event-stream' : 'application/json',
     };

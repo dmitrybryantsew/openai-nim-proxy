@@ -10,6 +10,7 @@ PORT="${PORT:-3000}"
 
 PROXY_API_KEY="${PROXY_API_KEY:-}"
 NIM_API_KEY="${NIM_API_KEY:-}"
+CHUTES_API_KEY="${CHUTES_API_KEY:-}"
 OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-}"
 
 if [[ "$(id -u)" -ne 0 ]]; then
@@ -61,6 +62,8 @@ if [[ ! -f "$APP_DIR/.env" ]]; then
     echo "NIM_API_BASE=https://integrate.api.nvidia.com/v1"
     echo "NIM_API_KEY=${NIM_API_KEY}"
     echo "NIM_FEATURED_MODELS=nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
+    echo "CHUTES_API_BASE=https://llm.chutes.ai/v1"
+    echo "CHUTES_API_KEY=${CHUTES_API_KEY}"
     echo "OPENROUTER_API_BASE=https://openrouter.ai/api/v1"
     echo "OPENROUTER_API_KEY=${OPENROUTER_API_KEY}"
     echo "OPENROUTER_INCLUDE_PAID=false"

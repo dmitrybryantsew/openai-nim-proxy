@@ -10,6 +10,8 @@ function createModelRegistry(options) {
     nimApiBase: trimTrailingSlash(options.nimApiBase),
     nimApiKey: options.nimApiKey,
     nimFeaturedModels: options.nimFeaturedModels || [],
+    chutesApiBase: trimTrailingSlash(options.chutesApiBase),
+    chutesApiKey: options.chutesApiKey,
     openRouterApiBase: trimTrailingSlash(options.openRouterApiBase),
     openRouterApiKey: options.openRouterApiKey,
     openRouterIncludePaid: options.openRouterIncludePaid,
@@ -30,14 +32,16 @@ function createModelRegistry(options) {
   }
 
   async function refreshModels() {
-    const [nimModels, openRouterModels] = await Promise.all([
+    const [nimModels, chutesModels, openRouterModels] = await Promise.all([
       fetchNimModels(config).catch(() => []),
+      fetchChutesModels(config).catch(() => []),
       fetchOpenRouterModels(config).catch(() => []),
     ]);
 
     const models = uniqueById([
       ...buildFeaturedNimModels(config.nimFeaturedModels),
       ...nimModels,
+      ...chutesModels,
       ...openRouterModels,
     ]).sort((a, b) => {
       if (a.provider !== b.provider) {
@@ -148,6 +152,47 @@ async function fetchNimModels(config) {
     }));
 }
 
+async function fetchChutesModels(config) {
+  if (!config.chutesApiKey) {
+    return [];
+  }
+
+  const response = await axios.get(`${config.chutesApiBase}/models`, {
+    headers: {
+      Authorization: `Bearer ${config.chutesApiKey}`,
+      Accept: 'application/json',
+    },
+    timeout: config.requestTimeoutMs,
+    validateStatus: () => true,
+  });
+
+  if (response.status < 200 || response.status >= 300) {
+    return [];
+  }
+
+  return (response.data?.data || [])
+    .filter((model) => model?.id)
+    .map((model) => ({
+      id: `chutes:${model.id}`,
+      object: 'model',
+      created: Number(model.created || 0),
+      owned_by: model.owned_by || model.id.split('/')[0] || 'chutes',
+      provider: 'chutes',
+      provider_model_id: model.id,
+      name: model.name || model.id,
+      free: null,
+      pricing: model.pricing || null,
+      context_length: model.context_length || model.top_provider?.context_length || null,
+      architecture: {
+        input_modalities: model.input_modalities || null,
+        output_modalities: model.output_modalities || null,
+      },
+      source: 'chutes',
+      supported_features: model.supported_features || [],
+      supported_parameters: model.supported_sampling_parameters || [],
+    }));
+}
+
 async function fetchOpenRouterModels(config) {
   const response = await axios.get(`${config.openRouterApiBase}/models`, {
     headers: buildOpenRouterHeaders(config, false),
@@ -213,6 +258,13 @@ function parseDirectModel(publicModelId) {
     const providerModelId = publicModelId.slice('openrouter:'.length);
     if (providerModelId) {
       return directModel('openrouter', providerModelId, publicModelId);
+    }
+  }
+
+  if (publicModelId.startsWith('chutes:')) {
+    const providerModelId = publicModelId.slice('chutes:'.length);
+    if (providerModelId) {
+      return directModel('chutes', providerModelId, publicModelId);
     }
   }
 

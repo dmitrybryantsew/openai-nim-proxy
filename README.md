@@ -1,10 +1,11 @@
 # openai-nim-proxy
 
-OpenAI-compatible proxy for NVIDIA NIM and OpenRouter models.
+OpenAI-compatible proxy for NVIDIA NIM, Chutes, and OpenRouter models.
 
 The proxy keeps OpenAI-style endpoints, but it does not fake OpenAI model aliases. It exposes real provider models with explicit IDs:
 
 - `nim:<nvidia-model-id>`
+- `chutes:<chutes-model-id>`
 - `openrouter:<openrouter-model-id>`
 
 Example: `openrouter:nvidia/nemotron-3-ultra-550b-a55b:free`.
@@ -16,6 +17,7 @@ Example: `openrouter:nvidia/nemotron-3-ultra-550b-a55b:free`.
 Sources:
 
 - NVIDIA NIM: `GET {NIM_API_BASE}/models`, when `NIM_API_KEY` is configured.
+- Chutes: `GET {CHUTES_API_BASE}/models`, when `CHUTES_API_KEY` is configured.
 - OpenRouter: `GET {OPENROUTER_API_BASE}/models`. By default only free text-only-output models are exposed.
 
 OpenRouter free filtering uses `:free` model IDs and zero prompt/completion pricing. NVIDIA's model list does not expose comparable free-pricing metadata, so NIM models are treated as models available to the configured NVIDIA key.
@@ -33,6 +35,10 @@ curl "http://localhost:3000/v1/models?modality=multimodal" \
 
 # OpenRouter free models only
 curl "http://localhost:3000/v1/models?provider=openrouter&free=true" \
+  -H "Authorization: Bearer replace-with-a-long-random-secret"
+
+# Chutes models only
+curl "http://localhost:3000/v1/models?provider=chutes" \
   -H "Authorization: Bearer replace-with-a-long-random-secret"
 ```
 
@@ -63,6 +69,7 @@ Set at least:
 ```bash
 PROXY_API_KEY=replace-with-a-long-random-secret
 NIM_API_KEY=nvapi-your-nvidia-key
+CHUTES_API_KEY=cpk-your-chutes-key
 OPENROUTER_API_KEY=sk-or-your-openrouter-key
 ```
 
@@ -115,6 +122,7 @@ docker build -t openai-nim-proxy .
 docker run --rm -p 3000:3000 \
   -e PROXY_API_KEY=replace-with-a-long-random-secret \
   -e NIM_API_KEY=nvapi-your-nvidia-key \
+  -e CHUTES_API_KEY=cpk-your-chutes-key \
   -e OPENROUTER_API_KEY=sk-or-your-openrouter-key \
   openai-nim-proxy
 ```
@@ -126,6 +134,7 @@ The included install script targets Debian/Ubuntu servers with systemd:
 ```bash
 sudo PROXY_API_KEY="replace-with-a-long-random-secret" \
   NIM_API_KEY="nvapi-your-nvidia-key" \
+  CHUTES_API_KEY="cpk-your-chutes-key" \
   OPENROUTER_API_KEY="sk-or-your-openrouter-key" \
   bash scripts/install-vps.sh
 ```
@@ -164,6 +173,8 @@ BASE_URL=http://your-server:3000 \
 | `CORS_ORIGIN` | `*` | Restrict this on a public VPS when browser clients are known. |
 | `NIM_API_BASE` | `https://integrate.api.nvidia.com/v1` | NVIDIA OpenAI-compatible endpoint. |
 | `NIM_API_KEY` | none | Required for NIM model listing, chat completions, and tests. |
+| `CHUTES_API_BASE` | `https://llm.chutes.ai/v1` | Chutes OpenAI-compatible endpoint. |
+| `CHUTES_API_KEY` | none | Required for Chutes model listing, chat completions, and tests. |
 | `OPENROUTER_API_BASE` | `https://openrouter.ai/api/v1` | OpenRouter OpenAI-compatible endpoint. |
 | `OPENROUTER_API_KEY` | none | Required for OpenRouter chat completions and tests. |
 | `OPENROUTER_INCLUDE_PAID` | `false` | If true, exposes paid OpenRouter models too. |
