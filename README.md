@@ -64,6 +64,14 @@ cp .env.example .env
 npm start
 ```
 
+Open the built-in chat UI:
+
+```text
+http://localhost:3000/
+```
+
+The UI asks for `PROXY_API_KEY` and stores it in browser local storage. Chats are saved in SQLite at `data/chats.sqlite` by default.
+
 Set at least:
 
 ```bash
@@ -156,6 +164,12 @@ systemctl status openai-nim-proxy
 journalctl -u openai-nim-proxy -f
 ```
 
+Then open:
+
+```text
+http://your-server:3000/
+```
+
 Remote smoke check:
 
 ```bash
@@ -178,7 +192,7 @@ BASE_URL=http://your-server:3000 \
 | `OPENROUTER_API_BASE` | `https://openrouter.ai/api/v1` | OpenRouter OpenAI-compatible endpoint. |
 | `OPENROUTER_API_KEY` | none | Required for OpenRouter chat completions and tests. |
 | `OPENROUTER_INCLUDE_PAID` | `false` | If true, exposes paid OpenRouter models too. |
-| `OPENROUTER_INCLUDE_MULTIMODAL_OUTPUT` | `false` | If true, also exposes models that return text plus another modality. |
+| `OPENROUTER_INCLUDE_MULTIMODAL_OUTPUT` | `true` | If true, also exposes models that return text plus another modality. |
 | `OPENROUTER_APP_TITLE` | `openai-nim-proxy` | Sent as `X-Title` to OpenRouter. |
 | `OPENROUTER_APP_URL` | none | Sent as `HTTP-Referer` to OpenRouter. |
 | `DEFAULT_MAX_TOKENS` | `4096` | Used when the client omits `max_tokens`. |
@@ -186,6 +200,7 @@ BASE_URL=http://your-server:3000 \
 | `MODEL_TEST_TIMEOUT_MS` | `30000` | Timeout for `/admin/models/test`. |
 | `MODEL_CACHE_TTL_MS` | `300000` | Cache duration for provider model lists. |
 | `MODEL_CACHE_FILE` | `data/models-cache.json` | Persistent model registry cache. |
+| `CHAT_DB_FILE` | `data/chats.sqlite` | SQLite database used by the built-in browser chat UI. |
 | `SHOW_REASONING` | `false` | If true, exposes upstream reasoning in `<think>` tags. |
-| `ENABLE_THINKING_MODE` | `false` | Forces `chat_template_kwargs.thinking=true`. |
+| `ENABLE_THINKING_MODE` | `false` | Forces `chat_template_kwargs.enable_thinking=true`. |
 | `THINKING_MODELS` | none | Comma-separated public or provider model IDs that should get thinking enabled. |

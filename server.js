@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 const { buildOpenRouterHeaders, createModelRegistry } = require('./src/model-registry');
+const { ChatStore } = require('./src/chat-store');
 
 const app = express();
 
@@ -10,6 +11,7 @@ const PORT = Number(process.env.PORT || 3000);
 const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS || 120000);
 const MODEL_CACHE_TTL_MS = Number(process.env.MODEL_CACHE_TTL_MS || 300000);
 const MODEL_CACHE_FILE = process.env.MODEL_CACHE_FILE || path.join(__dirname, 'data', 'models-cache.json');
+const CHAT_DB_FILE = process.env.CHAT_DB_FILE || path.join(__dirname, 'data', 'chats.sqlite');
 const PROXY_API_KEY = process.env.PROXY_API_KEY;
 const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
 const SHOW_REASONING = parseBoolean(process.env.SHOW_REASONING, false);
@@ -52,11 +54,16 @@ const registry = createModelRegistry({
   openRouterAppUrl: providers.openrouter.appUrl,
   openRouterAppTitle: providers.openrouter.appTitle,
 });
+const chatStore = new ChatStore(CHAT_DB_FILE);
 
 app.disable('x-powered-by');
 app.use(cors({ origin: CORS_ORIGIN }));
 app.use(express.json({ limit: process.env.BODY_LIMIT || '50mb' }));
 app.use(express.urlencoded({ limit: process.env.BODY_LIMIT || '50mb', extended: true }));
+app.use(express.static(path.join(__dirname, 'public'), {
+  extensions: ['html'],
+  index: 'index.html',
+}));
 
 app.use((req, res, next) => {
   if (req.path === '/health') {
@@ -132,6 +139,119 @@ app.get('/admin/models', asyncHandler(async (req, res) => {
   });
 }));
 
+app.get('/api/chats', (req, res) => {
+  const limit = Math.min(Number(req.query.limit || 100), 500);
+  res.json({
+    object: 'chat.list',
+    data: chatStore.listChats({ limit }),
+  });
+});
+
+app.post('/api/chats', (req, res) => {
+  const chat = chatStore.createChat({
+    title: req.body.title || 'New chat',
+    model: req.body.model || null,
+  });
+
+  res.status(201).json({
+    object: 'chat',
+    data: chat,
+  });
+});
+
+app.get('/api/chats/:id', (req, res) => {
+  const chat = chatStore.getChat(Number(req.params.id));
+  if (!chat) {
+    return res.status(404).json(openAiError('Chat not found', 'invalid_request_error', 404));
+  }
+
+  res.json({
+    object: 'chat',
+    data: chat,
+  });
+});
+
+app.patch('/api/chats/:id', (req, res) => {
+  const chat = chatStore.updateChat(Number(req.params.id), {
+    title: req.body.title,
+    model: req.body.model,
+  });
+
+  if (!chat) {
+    return res.status(404).json(openAiError('Chat not found', 'invalid_request_error', 404));
+  }
+
+  res.json({
+    object: 'chat',
+    data: chat,
+  });
+});
+
+app.delete('/api/chats/:id', (req, res) => {
+  if (!chatStore.deleteChat(Number(req.params.id))) {
+    return res.status(404).json(openAiError('Chat not found', 'invalid_request_error', 404));
+  }
+
+  res.status(204).end();
+});
+
+app.post('/api/chats/:id/messages', asyncHandler(async (req, res) => {
+  const chatId = Number(req.params.id);
+  const chat = chatStore.getChat(chatId);
+  if (!chat) {
+    return res.status(404).json(openAiError('Chat not found', 'invalid_request_error', 404));
+  }
+
+  const content = normalizeUserContent(req.body.content);
+  const modelId = req.body.model || chat.model;
+  if (!modelId) {
+    return res.status(400).json(openAiError('model is required', 'invalid_request_error', 400));
+  }
+
+  const userMessage = chatStore.addMessage({
+    chatId,
+    role: 'user',
+    content,
+    model: modelId,
+  });
+
+  const messages = [
+    ...chat.messages.map((message) => ({ role: message.role, content: message.content })),
+    { role: 'user', content },
+  ];
+  const completion = await createChatCompletion({
+    ...req.body,
+    model: modelId,
+    messages,
+    stream: false,
+  });
+  const assistantContent = completion.choices?.[0]?.message?.content || '';
+  const assistantMessage = chatStore.addMessage({
+    chatId,
+    role: 'assistant',
+    content: assistantContent,
+    model: modelId,
+    raw: completion,
+  });
+
+  if (chat.title === 'New chat') {
+    chatStore.updateChat(chatId, {
+      title: makeChatTitle(content),
+      model: modelId,
+    });
+  }
+
+  res.json({
+    object: 'chat.message_pair',
+    data: {
+      chat: chatStore.getChat(chatId),
+      user_message: normalizeMessageRow(userMessage),
+      assistant_message: normalizeMessageRow(assistantMessage),
+      completion,
+    },
+  });
+}));
+
 app.post('/admin/models/test', async (req, res) => {
   try {
     const models = await pickModelsForTest(req.body);
@@ -154,17 +274,8 @@ app.post('/admin/models/test', async (req, res) => {
 
 app.post('/v1/chat/completions', async (req, res) => {
   try {
-    const model = await registry.resolveModel(req.body.model);
     const stream = Boolean(req.body.stream);
-    const upstreamRequest = buildUpstreamRequest(req.body, model, stream);
-    const upstream = getProviderConfig(model.provider);
-
-    const response = await axios.post(`${upstream.apiBase}/chat/completions`, upstreamRequest, {
-      headers: buildProviderHeaders(model.provider, stream),
-      responseType: stream ? 'stream' : 'json',
-      timeout: REQUEST_TIMEOUT_MS,
-      validateStatus: () => true,
-    });
+    const { response, model } = await requestChatCompletion(req.body, stream);
 
     if (response.status < 200 || response.status >= 300) {
       return sendUpstreamError(res, response);
@@ -198,7 +309,35 @@ app.listen(PORT, () => {
   console.log(`Chutes API base: ${providers.chutes.apiBase}`);
   console.log(`OpenRouter API base: ${providers.openrouter.apiBase}`);
   console.log(`Model cache: ${MODEL_CACHE_FILE}`);
+  console.log(`Chat database: ${CHAT_DB_FILE}`);
 });
+
+async function createChatCompletion(body) {
+  const { response, model } = await requestChatCompletion(body, false);
+
+  if (response.status < 200 || response.status >= 300) {
+    const upstreamError = response.data?.error;
+    const message = upstreamError?.message || response.statusText || 'Provider request failed';
+    throw Object.assign(new Error(message), { status: response.status });
+  }
+
+  return toOpenAiCompletion(response.data, model.id);
+}
+
+async function requestChatCompletion(body, stream) {
+  const model = await registry.resolveModel(body.model);
+  const upstreamRequest = buildUpstreamRequest(body, model, stream);
+  const upstream = getProviderConfig(model.provider);
+
+  const response = await axios.post(`${upstream.apiBase}/chat/completions`, upstreamRequest, {
+    headers: buildProviderHeaders(model.provider, stream),
+    responseType: stream ? 'stream' : 'json',
+    timeout: REQUEST_TIMEOUT_MS,
+    validateStatus: () => true,
+  });
+
+  return { response, model };
+}
 
 async function pickModelsForTest(body = {}) {
   if (body.model) {
@@ -252,6 +391,33 @@ async function testModel(model) {
       error: error.response?.data?.error?.message || error.message,
     };
   }
+}
+
+function normalizeUserContent(content) {
+  if (typeof content === 'string' && content.trim()) {
+    return content.trim();
+  }
+
+  if (Array.isArray(content)) {
+    return JSON.stringify(content);
+  }
+
+  throw Object.assign(new Error('content is required'), { status: 400 });
+}
+
+function normalizeMessageRow(message) {
+  return {
+    ...message,
+    id: Number(message.id),
+    chat_id: Number(message.chat_id),
+  };
+}
+
+function makeChatTitle(content) {
+  return String(content)
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80) || 'New chat';
 }
 
 function buildUpstreamRequest(body, model, stream) {

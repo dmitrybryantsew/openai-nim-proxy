@@ -5,7 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node --check src/model-registry.js",
+    "check": "node --check server.js && node --check src/model-registry.js && node --check src/chat-store.js && node --check public/app.js",
     "smoke": "bash scripts/check.sh"
   },
   "dependencies": {

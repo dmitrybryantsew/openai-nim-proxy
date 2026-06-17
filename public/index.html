@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>OpenAI NIM Proxy Chat</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div>
+            <h1>Proxy Chat</h1>
+            <p>NIM, Chutes, OpenRouter</p>
+          </div>
+          <button id="newChatButton" class="icon-button" title="New chat" aria-label="New chat">+</button>
+        </div>
+
+        <label class="field">
+          <span>Proxy key</span>
+          <input id="apiKeyInput" type="password" autocomplete="off" placeholder="Bearer key">
+        </label>
+
+        <div class="sidebar-actions">
+          <button id="saveKeyButton">Save key</button>
+          <button id="refreshModelsButton" class="secondary">Models</button>
+        </div>
+
+        <label class="field">
+          <span>Model</span>
+          <select id="modelSelect"></select>
+        </label>
+
+        <div class="filters">
+          <button class="filter active" data-filter="all">All</button>
+          <button class="filter" data-filter="text">Text</button>
+          <button class="filter" data-filter="multimodal">Multimodal</button>
+        </div>
+
+        <div id="status" class="status">Enter proxy key to load chats.</div>
+        <nav id="chatList" class="chat-list" aria-label="Saved chats"></nav>
+      </aside>
+
+      <section class="chat-panel">
+        <header class="chat-header">
+          <input id="chatTitle" class="chat-title" value="New chat" aria-label="Chat title">
+          <button id="deleteChatButton" class="secondary danger">Delete</button>
+        </header>
+
+        <div id="messages" class="messages"></div>
+
+        <form id="composer" class="composer">
+          <textarea id="messageInput" rows="1" placeholder="Send a message"></textarea>
+          <button id="sendButton" type="submit">Send</button>
+        </form>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
