@@ -2,7 +2,7 @@ const path = require('path');
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
-const { buildOpenRouterHeaders, createModelRegistry } = require('./src/model-registry');
+const { buildOpenRouterHeaders, buildOptionalBearerHeaders, createModelRegistry } = require('./src/model-registry');
 const { ChatStore } = require('./src/chat-store');
 
 const app = express();
@@ -28,6 +28,11 @@ const providers = {
     apiBase: trimTrailingSlash(process.env.CHUTES_API_BASE || 'https://llm.chutes.ai/v1'),
     apiKey: process.env.CHUTES_API_KEY,
   },
+  ollama: {
+    apiBase: trimTrailingSlash(process.env.OLLAMA_API_BASE || 'http://127.0.0.1:11434/v1'),
+    apiKey: process.env.OLLAMA_API_KEY,
+    enabled: parseBoolean(process.env.OLLAMA_ENABLED, true),
+  },
   openrouter: {
     apiBase: trimTrailingSlash(process.env.OPENROUTER_API_BASE || 'https://openrouter.ai/api/v1'),
     apiKey: process.env.OPENROUTER_API_KEY,
@@ -47,6 +52,9 @@ const registry = createModelRegistry({
   nimFeaturedModels: NIM_FEATURED_MODELS,
   chutesApiBase: providers.chutes.apiBase,
   chutesApiKey: providers.chutes.apiKey,
+  ollamaApiBase: providers.ollama.apiBase,
+  ollamaApiKey: providers.ollama.apiKey,
+  ollamaEnabled: providers.ollama.enabled,
   openRouterApiBase: providers.openrouter.apiBase,
   openRouterApiKey: providers.openrouter.apiKey,
   openRouterIncludePaid: providers.openrouter.includePaid,
@@ -94,6 +102,11 @@ app.get('/health', (_req, res) => {
       chutes: {
         api_base: providers.chutes.apiBase,
         api_key_configured: Boolean(providers.chutes.apiKey),
+      },
+      ollama: {
+        api_base: providers.ollama.apiBase,
+        enabled: providers.ollama.enabled,
+        api_key_configured: Boolean(providers.ollama.apiKey),
       },
       openrouter: {
         api_base: providers.openrouter.apiBase,
@@ -307,6 +320,7 @@ app.listen(PORT, () => {
   console.log(`openai-nim-proxy listening on http://localhost:${PORT}`);
   console.log(`NVIDIA API base: ${providers.nim.apiBase}`);
   console.log(`Chutes API base: ${providers.chutes.apiBase}`);
+  console.log(`Ollama API base: ${providers.ollama.apiBase}`);
   console.log(`OpenRouter API base: ${providers.openrouter.apiBase}`);
   console.log(`Model cache: ${MODEL_CACHE_FILE}`);
   console.log(`Chat database: ${CHAT_DB_FILE}`);
@@ -623,6 +637,14 @@ function getProviderConfig(provider) {
     throw Object.assign(new Error(`Unsupported provider "${provider}"`), { status: 400 });
   }
 
+  if (provider === 'ollama') {
+    if (!config.enabled) {
+      throw Object.assign(new Error('OLLAMA_ENABLED must be true to use Ollama models'), { status: 500 });
+    }
+
+    return config;
+  }
+
   if (!config.apiKey) {
     throw Object.assign(new Error(`${provider.toUpperCase()}_API_KEY is required for chat completions and tests`), { status: 500 });
   }
@@ -644,6 +666,13 @@ function buildProviderHeaders(provider, stream) {
       Authorization: `Bearer ${providers.chutes.apiKey}`,
       'Content-Type': 'application/json',
       Accept: stream ? 'text/event-stream' : 'application/json',
+    };
+  }
+
+  if (provider === 'ollama') {
+    return {
+      ...buildOptionalBearerHeaders(providers.ollama.apiKey, stream),
+      'Content-Type': 'application/json',
     };
   }
 
