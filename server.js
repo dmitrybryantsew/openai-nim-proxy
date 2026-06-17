@@ -29,6 +29,7 @@ const KITTENTTS_OUTPUT_FORMAT = process.env.KITTENTTS_OUTPUT_FORMAT || 'wav';
 const PIPER_BINARY = process.env.PIPER_BINARY || '/opt/piper/piper';
 const PIPER_MODEL = process.env.PIPER_MODEL || '/opt/piper/voices/en_US-lessac-medium.onnx';
 const PIPER_DEFAULT_VOICE = process.env.PIPER_DEFAULT_VOICE || 'en_US-lessac-medium';
+const TTS_PROVIDERS = parseCsv(process.env.TTS_PROVIDERS || 'kokoro,kittentts,piper').map(normalizeTtsProvider);
 const TTS_TIMEOUT_MS = Number(process.env.TTS_TIMEOUT_MS || 120000);
 const PROXY_API_KEY = process.env.PROXY_API_KEY;
 const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
@@ -805,13 +806,13 @@ function getProviderConfig(provider) {
 
 async function getTtsProviders() {
   const [piperBinaryOk, piperModelOk, kokoroOk, kittenOk] = await Promise.all([
-    pathExists(PIPER_BINARY),
-    pathExists(PIPER_MODEL),
-    checkKokoro(),
-    checkKittenTts(),
+    isTtsProviderEnabled('piper') ? pathExists(PIPER_BINARY) : false,
+    isTtsProviderEnabled('piper') ? pathExists(PIPER_MODEL) : false,
+    isTtsProviderEnabled('kokoro') ? checkKokoro() : false,
+    isTtsProviderEnabled('kittentts') ? checkKittenTts() : false,
   ]);
 
-  return [
+  const providers = [
     {
       id: 'kokoro',
       name: 'Kokoro',
@@ -844,6 +845,8 @@ async function getTtsProviders() {
       output_formats: ['wav'],
     },
   ];
+
+  return providers.filter((provider) => isTtsProviderEnabled(provider.id));
 }
 
 async function checkKokoro() {
@@ -883,6 +886,10 @@ async function synthesizeSpeech(body) {
   }
 
   const provider = normalizeTtsProvider(body.provider || body.model);
+  if (!isTtsProviderEnabled(provider)) {
+    throw Object.assign(new Error(`TTS provider "${provider}" is disabled`), { status: 400 });
+  }
+
   if (provider === 'piper') {
     return synthesizeWithPiper(body, input);
   }
@@ -1085,9 +1092,9 @@ function shellQuote(value) {
 
 function normalizeTtsProviders(value) {
   if (Array.isArray(value) && value.length > 0) {
-    return value.map(normalizeTtsProvider);
+    return value.map(normalizeTtsProvider).filter(isTtsProviderEnabled);
   }
-  return ['kokoro', 'kittentts', 'piper'];
+  return TTS_PROVIDERS;
 }
 
 function normalizeTtsProvider(value) {
@@ -1105,6 +1112,10 @@ function normalizeTtsProvider(value) {
     return 'kokoro';
   }
   return normalized;
+}
+
+function isTtsProviderEnabled(provider) {
+  return TTS_PROVIDERS.includes(provider);
 }
 
 function getTtsModelName(value, fallback) {

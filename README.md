@@ -157,7 +157,7 @@ Supported local providers:
 - `tts:kittentts` runs the KittenTTS Python wrapper installed by `scripts/install-tts-vps.sh`. You can test the documented KittenTTS sizes from the TTS page: mini 80M, micro 40M, nano 15M, and nano int8. You can also point it at an HTTP endpoint with `KITTENTTS_API_BASE`.
 - `tts:piper` runs the local Piper CLI and returns WAV.
 
-Install both on an Ubuntu/Debian VPS:
+Install all test engines on an Ubuntu/Debian VPS:
 
 ```bash
 cd /opt/openai-nim-proxy
@@ -165,6 +165,20 @@ sudo bash scripts/install-tts-vps.sh
 ```
 
 The installer runs Kokoro-FastAPI as a local Docker-backed systemd service, installs KittenTTS from the GitHub release wheel, downloads Piper plus the `en_US-lessac-medium` voice, updates `/opt/openai-nim-proxy/.env`, and restarts the proxy.
+
+On a 1-core / 2 GB RAM VPS, Piper is usually the only practical local TTS provider. To remove Kokoro and KittenTTS after testing, keep Piper, and make the proxy expose only `tts:piper`:
+
+```bash
+cd /opt/openai-nim-proxy
+sudo bash scripts/cleanup-tts-vps.sh
+systemctl status openai-nim-proxy --no-pager
+```
+
+If the server does not use Docker for anything else, you can also remove the Docker package:
+
+```bash
+sudo REMOVE_DOCKER_PACKAGE=true bash scripts/cleanup-tts-vps.sh
+```
 
 Run a command-line benchmark:
 
@@ -342,6 +356,7 @@ BASE_URL=http://your-server:3000 \
 | `PIPER_BINARY` | `/opt/piper/piper` | Piper CLI path. |
 | `PIPER_MODEL` | `/opt/piper/voices/en_US-lessac-medium.onnx` | Piper voice model path. |
 | `PIPER_DEFAULT_VOICE` | `en_US-lessac-medium` | Display/default label for Piper. |
+| `TTS_PROVIDERS` | `kokoro,kittentts,piper` | Comma-separated enabled TTS providers. Use `piper` on small VPS hosts. |
 | `TTS_TIMEOUT_MS` | `120000` | TTS generation timeout. |
 | `SHOW_REASONING` | `false` | If true, exposes upstream reasoning in `<think>` tags. |
 | `ENABLE_THINKING_MODE` | `false` | Forces `chat_template_kwargs.enable_thinking=true`. |

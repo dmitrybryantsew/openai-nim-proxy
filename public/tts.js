@@ -71,6 +71,7 @@ async function loadProviders() {
     const data = await api('/api/tts/providers');
     state.providers = data.data || [];
     renderProviders(data.data || []);
+    renderProviderOptions();
     renderModelPresets();
     setStatus('Provider status loaded.');
   } catch (error) {
@@ -95,7 +96,7 @@ async function runBenchmark(event) {
 
   const selectedProvider = elements.providerSelect.value;
   const providers = selectedProvider === 'all'
-    ? ['kokoro', 'kittentts', 'piper']
+    ? state.providers.map((provider) => provider.id)
     : [selectedProvider];
   const model = elements.modelInput.value.trim();
   const models = {};
@@ -142,6 +143,31 @@ function renderModelPresets() {
   }
 
   elements.modelInput.placeholder = provider?.default_model || 'Provider default';
+}
+
+function renderProviderOptions() {
+  const currentValue = elements.providerSelect.value;
+  elements.providerSelect.innerHTML = '';
+
+  if (state.providers.length > 1) {
+    const allOption = document.createElement('option');
+    allOption.value = 'all';
+    allOption.textContent = 'Compare all';
+    elements.providerSelect.appendChild(allOption);
+  }
+
+  for (const provider of state.providers) {
+    const option = document.createElement('option');
+    option.value = provider.id;
+    option.textContent = provider.name || provider.id;
+    elements.providerSelect.appendChild(option);
+  }
+
+  const hasCurrent = Array.from(elements.providerSelect.options)
+    .some((option) => option.value === currentValue);
+  elements.providerSelect.value = hasCurrent
+    ? currentValue
+    : (elements.providerSelect.options[0]?.value || '');
 }
 
 function renderProviders(providers) {
