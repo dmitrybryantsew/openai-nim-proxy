@@ -86,7 +86,7 @@ Open the TTS benchmark UI:
 http://localhost:3000/tts.html
 ```
 
-It uses the same `PROXY_API_KEY`, checks Kokoro/Piper readiness, generates test audio, and reports latency, bytes, and characters per second.
+It uses the same `PROXY_API_KEY`, checks Kokoro/KittenTTS/Piper readiness, generates test audio, and reports latency, bytes, and characters per second.
 
 Set at least:
 
@@ -154,6 +154,7 @@ curl http://localhost:3000/v1/audio/speech \
 Supported local providers:
 
 - `tts:kokoro` routes to Kokoro-FastAPI, default `KOKORO_API_BASE=http://127.0.0.1:8880/v1`.
+- `tts:kittentts` runs the KittenTTS Python wrapper installed by `scripts/install-tts-vps.sh`. You can also point it at an HTTP endpoint with `KITTENTTS_API_BASE`.
 - `tts:piper` runs the local Piper CLI and returns WAV.
 
 Install both on an Ubuntu/Debian VPS:
@@ -163,7 +164,7 @@ cd /opt/openai-nim-proxy
 sudo bash scripts/install-tts-vps.sh
 ```
 
-The installer runs Kokoro-FastAPI as a local Docker-backed systemd service, downloads Piper plus the `en_US-lessac-medium` voice, updates `/opt/openai-nim-proxy/.env`, and restarts the proxy.
+The installer runs Kokoro-FastAPI as a local Docker-backed systemd service, installs KittenTTS from the GitHub release wheel, downloads Piper plus the `en_US-lessac-medium` voice, updates `/opt/openai-nim-proxy/.env`, and restarts the proxy.
 
 Run a command-line benchmark:
 
@@ -304,6 +305,12 @@ BASE_URL=http://your-server:3000 \
 | `KOKORO_MODEL` | `kokoro` | Model name sent to Kokoro-FastAPI. |
 | `KOKORO_DEFAULT_VOICE` | `af_heart` | Default Kokoro voice for `/v1/audio/speech`. |
 | `KOKORO_API_KEY` | none | Optional bearer token if Kokoro is behind an authenticating proxy. |
+| `KITTENTTS_API_BASE` | none | Optional OpenAI-compatible KittenTTS HTTP endpoint. If set, the proxy uses HTTP instead of local command mode. |
+| `KITTENTTS_API_KEY` | none | Optional bearer token for the KittenTTS HTTP endpoint. |
+| `KITTENTTS_MODEL` | `KittenML/kitten-tts-nano-0.8` | KittenTTS model name or path. |
+| `KITTENTTS_DEFAULT_VOICE` | `Jasper` | Default KittenTTS voice. The upstream examples include voices such as Bella, Liam, and Jasper. |
+| `KITTENTTS_COMMAND` | none | Local command template. The VPS installer sets this to the Python wrapper. Supports `{model}`, `{voice}`, `{speed}`, `{format}`, and `{output}` tokens. Text is passed on stdin. |
+| `KITTENTTS_OUTPUT_FORMAT` | `wav` | Expected output format for local KittenTTS command mode. |
 | `PIPER_BINARY` | `/opt/piper/piper` | Piper CLI path. |
 | `PIPER_MODEL` | `/opt/piper/voices/en_US-lessac-medium.onnx` | Piper voice model path. |
 | `PIPER_DEFAULT_VOICE` | `en_US-lessac-medium` | Display/default label for Piper. |

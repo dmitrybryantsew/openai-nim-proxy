@@ -19,6 +19,12 @@ const KOKORO_API_BASE = trimTrailingSlash(process.env.KOKORO_API_BASE || 'http:/
 const KOKORO_API_KEY = process.env.KOKORO_API_KEY;
 const KOKORO_MODEL = process.env.KOKORO_MODEL || 'kokoro';
 const KOKORO_DEFAULT_VOICE = process.env.KOKORO_DEFAULT_VOICE || 'af_heart';
+const KITTENTTS_API_BASE = trimTrailingSlash(process.env.KITTENTTS_API_BASE || '');
+const KITTENTTS_API_KEY = process.env.KITTENTTS_API_KEY;
+const KITTENTTS_MODEL = process.env.KITTENTTS_MODEL || 'KittenML/kitten-tts-nano-0.8';
+const KITTENTTS_DEFAULT_VOICE = process.env.KITTENTTS_DEFAULT_VOICE || 'Jasper';
+const KITTENTTS_COMMAND = process.env.KITTENTTS_COMMAND || '';
+const KITTENTTS_OUTPUT_FORMAT = process.env.KITTENTTS_OUTPUT_FORMAT || 'wav';
 const PIPER_BINARY = process.env.PIPER_BINARY || '/opt/piper/piper';
 const PIPER_MODEL = process.env.PIPER_MODEL || '/opt/piper/voices/en_US-lessac-medium.onnx';
 const PIPER_DEFAULT_VOICE = process.env.PIPER_DEFAULT_VOICE || 'en_US-lessac-medium';
@@ -133,6 +139,8 @@ app.get('/health', (_req, res) => {
     tts: {
       kokoro_api_base: KOKORO_API_BASE,
       kokoro_configured: Boolean(KOKORO_API_BASE),
+      kittentts_api_base: KITTENTTS_API_BASE || null,
+      kittentts_command_configured: Boolean(KITTENTTS_COMMAND),
       piper_binary: PIPER_BINARY,
       piper_model: PIPER_MODEL,
     },
@@ -753,10 +761,11 @@ function getProviderConfig(provider) {
 }
 
 async function getTtsProviders() {
-  const [piperBinaryOk, piperModelOk, kokoroOk] = await Promise.all([
+  const [piperBinaryOk, piperModelOk, kokoroOk, kittenOk] = await Promise.all([
     pathExists(PIPER_BINARY),
     pathExists(PIPER_MODEL),
     checkKokoro(),
+    checkKittenTts(),
   ]);
 
   return [
@@ -768,6 +777,16 @@ async function getTtsProviders() {
       api_base: KOKORO_API_BASE,
       default_voice: KOKORO_DEFAULT_VOICE,
       output_formats: ['mp3', 'wav', 'opus', 'flac', 'aac', 'pcm'],
+    },
+    {
+      id: 'kittentts',
+      name: 'KittenTTS',
+      type: KITTENTTS_API_BASE ? 'http' : 'local-command',
+      ready: kittenOk,
+      api_base: KITTENTTS_API_BASE || null,
+      command_configured: Boolean(KITTENTTS_COMMAND),
+      default_voice: KITTENTTS_DEFAULT_VOICE,
+      output_formats: KITTENTTS_API_BASE ? ['mp3', 'wav', 'opus', 'flac', 'aac', 'pcm'] : [KITTENTTS_OUTPUT_FORMAT],
     },
     {
       id: 'piper',
@@ -795,6 +814,23 @@ async function checkKokoro() {
   }
 }
 
+async function checkKittenTts() {
+  if (KITTENTTS_API_BASE) {
+    try {
+      const response = await axios.get(`${KITTENTTS_API_BASE}/models`, {
+        headers: buildOptionalBearerHeaders(KITTENTTS_API_KEY, false),
+        timeout: 3000,
+        validateStatus: () => true,
+      });
+      return response.status >= 200 && response.status < 500;
+    } catch {
+      return false;
+    }
+  }
+
+  return Boolean(KITTENTTS_COMMAND);
+}
+
 async function synthesizeSpeech(body) {
   const input = String(body.input || '').trim();
   if (!input) {
@@ -810,7 +846,70 @@ async function synthesizeSpeech(body) {
     return synthesizeWithKokoro(body, input);
   }
 
+  if (provider === 'kittentts') {
+    return synthesizeWithKittenTts(body, input);
+  }
+
   throw Object.assign(new Error(`Unsupported TTS provider "${provider}"`), { status: 400 });
+}
+
+async function synthesizeWithKittenTts(body, input) {
+  if (KITTENTTS_API_BASE) {
+    const responseFormat = String(body.response_format || 'mp3').toLowerCase();
+    const response = await axios.post(`${KITTENTTS_API_BASE}/audio/speech`, {
+      model: body.model && !String(body.model).startsWith('tts:')
+        ? body.model
+        : KITTENTTS_MODEL,
+      input,
+      voice: body.voice || KITTENTTS_DEFAULT_VOICE,
+      response_format: responseFormat,
+      speed: body.speed || 1,
+    }, {
+      headers: {
+        ...buildOptionalBearerHeaders(KITTENTTS_API_KEY, false),
+        'Content-Type': 'application/json',
+      },
+      responseType: 'arraybuffer',
+      timeout: TTS_TIMEOUT_MS,
+      validateStatus: () => true,
+    });
+
+    if (response.status < 200 || response.status >= 300) {
+      const message = Buffer.from(response.data || '').toString('utf8') || response.statusText || 'KittenTTS failed';
+      throw Object.assign(new Error(message), { status: response.status });
+    }
+
+    return {
+      provider: 'kittentts',
+      audio: Buffer.from(response.data),
+      contentType: response.headers['content-type'] || audioContentType(responseFormat),
+    };
+  }
+
+  if (!KITTENTTS_COMMAND) {
+    throw Object.assign(new Error('KITTENTTS_API_BASE or KITTENTTS_COMMAND is required'), { status: 500 });
+  }
+
+  await fs.mkdir(TTS_OUTPUT_DIR, { recursive: true });
+  const responseFormat = String(body.response_format || KITTENTTS_OUTPUT_FORMAT).toLowerCase();
+  const outputFile = path.join(TTS_OUTPUT_DIR, `kittentts-${Date.now()}-${Math.random().toString(16).slice(2)}.${responseFormat}`);
+  const command = renderCommandTemplate(KITTENTTS_COMMAND, {
+    model: KITTENTTS_MODEL,
+    output: outputFile,
+    voice: body.voice || KITTENTTS_DEFAULT_VOICE,
+    format: responseFormat,
+    speed: body.speed || 1,
+  });
+
+  await runShellCommand(command, input, 'KittenTTS');
+  const audio = await fs.readFile(outputFile);
+  fs.unlink(outputFile).catch(() => {});
+
+  return {
+    provider: 'kittentts',
+    audio,
+    contentType: audioContentType(responseFormat),
+  };
 }
 
 async function synthesizeWithKokoro(body, input) {
@@ -899,11 +998,50 @@ function runPiper(input, args) {
   });
 }
 
+function runShellCommand(command, input, label) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, {
+      shell: true,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let stderr = '';
+    const timeout = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(Object.assign(new Error(`${label} timed out after ${TTS_TIMEOUT_MS}ms`), { status: 504 }));
+    }, TTS_TIMEOUT_MS);
+
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString('utf8');
+    });
+    child.on('error', (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.on('close', (code) => {
+      clearTimeout(timeout);
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(Object.assign(new Error(stderr.trim() || `${label} exited with code ${code}`), { status: 500 }));
+      }
+    });
+    child.stdin.end(input);
+  });
+}
+
+function renderCommandTemplate(template, values) {
+  return String(template).replace(/\{(model|output|voice|format|speed)\}/g, (_match, key) => shellQuote(String(values[key])));
+}
+
+function shellQuote(value) {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
 function normalizeTtsProviders(value) {
   if (Array.isArray(value) && value.length > 0) {
     return value.map(normalizeTtsProvider);
   }
-  return ['kokoro', 'piper'];
+  return ['kokoro', 'kittentts', 'piper'];
 }
 
 function normalizeTtsProvider(value) {
@@ -913,6 +1051,9 @@ function normalizeTtsProvider(value) {
   }
   if (normalized.includes('piper')) {
     return 'piper';
+  }
+  if (normalized.includes('kitten')) {
+    return 'kittentts';
   }
   if (normalized.includes('kokoro')) {
     return 'kokoro';

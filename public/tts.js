@@ -87,7 +87,7 @@ async function runBenchmark(event) {
 
   const selectedProvider = elements.providerSelect.value;
   const providers = selectedProvider === 'all'
-    ? ['kokoro', 'piper']
+    ? ['kokoro', 'kittentts', 'piper']
     : [selectedProvider];
 
   try {

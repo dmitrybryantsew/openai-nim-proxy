@@ -3,8 +3,8 @@ set -euo pipefail
 
 BASE_URL="${BASE_URL:-http://127.0.0.1:3000}"
 PROXY_API_KEY="${PROXY_API_KEY:-}"
-PROVIDERS="${PROVIDERS:-kokoro,piper}"
-TEXT="${TEXT:-This is a text to speech benchmark for Kokoro and Piper running behind the OpenAI-compatible proxy.}"
+PROVIDERS="${PROVIDERS:-kokoro,kittentts,piper}"
+TEXT="${TEXT:-This is a text to speech benchmark for Kokoro, KittenTTS, and Piper running behind the OpenAI-compatible proxy.}"
 
 if [[ -z "$PROXY_API_KEY" ]]; then
   echo "Set PROXY_API_KEY before running this script." >&2

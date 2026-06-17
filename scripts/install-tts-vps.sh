@@ -10,7 +10,12 @@ PIPER_VOICE_NAME="${PIPER_VOICE_NAME:-en_US-lessac-medium}"
 PIPER_VOICE_BASE_URL="${PIPER_VOICE_BASE_URL:-https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium}"
 KOKORO_IMAGE="${KOKORO_IMAGE:-ghcr.io/remsky/kokoro-fastapi-cpu:latest}"
 KOKORO_PORT="${KOKORO_PORT:-8880}"
+KITTENTTS_DIR="${KITTENTTS_DIR:-/opt/kittentts}"
+KITTENTTS_WHEEL_URL="${KITTENTTS_WHEEL_URL:-https://github.com/KittenML/KittenTTS/releases/download/0.8.1/kittentts-0.8.1-py3-none-any.whl}"
+KITTENTTS_MODEL="${KITTENTTS_MODEL:-KittenML/kitten-tts-nano-0.8}"
+KITTENTTS_DEFAULT_VOICE="${KITTENTTS_DEFAULT_VOICE:-Jasper}"
 INSTALL_KOKORO="${INSTALL_KOKORO:-true}"
+INSTALL_KITTENTTS="${INSTALL_KITTENTTS:-true}"
 INSTALL_PIPER="${INSTALL_PIPER:-true}"
 
 if [[ "$(id -u)" -ne 0 ]]; then
@@ -19,7 +24,7 @@ if [[ "$(id -u)" -ne 0 ]]; then
 fi
 
 apt-get update
-apt-get install -y ca-certificates curl tar gzip
+apt-get install -y ca-certificates curl tar gzip python3 python3-venv
 
 if [[ "$INSTALL_PIPER" == "true" ]]; then
   mkdir -p "$PIPER_DIR" "$PIPER_VOICE_DIR"
@@ -36,6 +41,14 @@ if [[ "$INSTALL_PIPER" == "true" ]]; then
     -o "${PIPER_VOICE_DIR}/${PIPER_VOICE_NAME}.onnx"
   curl -fL "${PIPER_VOICE_BASE_URL}/${PIPER_VOICE_NAME}.onnx.json" \
     -o "${PIPER_VOICE_DIR}/${PIPER_VOICE_NAME}.onnx.json"
+fi
+
+if [[ "$INSTALL_KITTENTTS" == "true" ]]; then
+  mkdir -p "$KITTENTTS_DIR"
+  python3 -m venv "$KITTENTTS_DIR/venv"
+  "$KITTENTTS_DIR/venv/bin/python" -m pip install --upgrade pip
+  "$KITTENTTS_DIR/venv/bin/python" -m pip install "$KITTENTTS_WHEEL_URL"
+  install -m 0755 "${APP_DIR}/scripts/kittentts-synthesize.py" "$KITTENTTS_DIR/kittentts-synthesize.py"
 fi
 
 if [[ "$INSTALL_KOKORO" == "true" ]]; then
@@ -83,6 +96,10 @@ if [[ -f "${APP_DIR}/.env" ]]; then
   ensure_env "KOKORO_API_BASE" "http://127.0.0.1:${KOKORO_PORT}/v1"
   ensure_env "KOKORO_MODEL" "kokoro"
   ensure_env "KOKORO_DEFAULT_VOICE" "af_heart"
+  ensure_env "KITTENTTS_MODEL" "${KITTENTTS_MODEL}"
+  ensure_env "KITTENTTS_DEFAULT_VOICE" "${KITTENTTS_DEFAULT_VOICE}"
+  ensure_env "KITTENTTS_COMMAND" "${KITTENTTS_DIR}/venv/bin/python ${KITTENTTS_DIR}/kittentts-synthesize.py --model {model} --voice {voice} --speed {speed} --output {output}"
+  ensure_env "KITTENTTS_OUTPUT_FORMAT" "wav"
   ensure_env "PIPER_BINARY" "${PIPER_DIR}/piper"
   ensure_env "PIPER_MODEL" "${PIPER_VOICE_DIR}/${PIPER_VOICE_NAME}.onnx"
   ensure_env "PIPER_DEFAULT_VOICE" "${PIPER_VOICE_NAME}"
@@ -93,5 +110,6 @@ fi
 
 echo "TTS setup complete."
 echo "Kokoro: http://127.0.0.1:${KOKORO_PORT}/v1"
+echo "KittenTTS: ${KITTENTTS_DIR}/venv/bin/python ${KITTENTTS_DIR}/kittentts-synthesize.py"
 echo "Piper: ${PIPER_DIR}/piper"
 echo "TTS page: http://your-server:3000/tts.html"
