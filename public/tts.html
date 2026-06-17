@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Proxy TTS Bench</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="tts-shell">
+      <header class="tts-header">
+        <div>
+          <h1>TTS Bench</h1>
+          <p>Kokoro and Piper local speech test</p>
+        </div>
+        <a class="secondary nav-link" href="/">Chat</a>
+      </header>
+
+      <section class="tts-layout">
+        <form id="ttsForm" class="tts-controls">
+          <label class="field">
+            <span>Proxy key</span>
+            <input id="apiKeyInput" type="password" autocomplete="off" placeholder="Bearer key">
+          </label>
+
+          <label class="field">
+            <span>Provider</span>
+            <select id="providerSelect">
+              <option value="kokoro">Kokoro</option>
+              <option value="piper">Piper</option>
+              <option value="all">Compare both</option>
+            </select>
+          </label>
+
+          <div class="settings-grid">
+            <label class="field">
+              <span>Voice</span>
+              <input id="voiceInput" type="text" placeholder="af_heart">
+            </label>
+            <label class="field">
+              <span>Format</span>
+              <select id="formatSelect">
+                <option value="mp3">MP3</option>
+                <option value="wav">WAV</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Speed</span>
+              <input id="speedInput" type="number" min="0.5" max="2" step="0.1" value="1">
+            </label>
+          </div>
+
+          <label class="field">
+            <span>Text</span>
+            <textarea id="textInput" rows="8">This is a text to speech benchmark for the proxy. It should sound clear, finish quickly, and produce audio that can be reused by browser clients.</textarea>
+          </label>
+
+          <div class="sidebar-actions">
+            <button id="saveKeyButton" type="button" class="secondary">Save key</button>
+            <button id="runButton" type="submit">Run</button>
+          </div>
+        </form>
+
+        <section class="tts-results">
+          <div id="status" class="status">Enter proxy key, then run a test.</div>
+          <div id="providers" class="tts-provider-list"></div>
+          <div id="results" class="tts-result-list"></div>
+        </section>
+      </section>
+    </main>
+
+    <script src="/tts.js"></script>
+  </body>
+</html>

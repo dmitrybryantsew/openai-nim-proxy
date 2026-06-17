@@ -1,4 +1,6 @@
 const path = require('path');
+const fs = require('fs/promises');
+const { spawn } = require('child_process');
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
@@ -12,6 +14,15 @@ const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS || 1200000);
 const MODEL_CACHE_TTL_MS = Number(process.env.MODEL_CACHE_TTL_MS || 300000);
 const MODEL_CACHE_FILE = process.env.MODEL_CACHE_FILE || path.join(__dirname, 'data', 'models-cache.json');
 const CHAT_DB_FILE = process.env.CHAT_DB_FILE || path.join(__dirname, 'data', 'chats.sqlite');
+const TTS_OUTPUT_DIR = process.env.TTS_OUTPUT_DIR || path.join(__dirname, 'data', 'tts');
+const KOKORO_API_BASE = trimTrailingSlash(process.env.KOKORO_API_BASE || 'http://127.0.0.1:8880/v1');
+const KOKORO_API_KEY = process.env.KOKORO_API_KEY;
+const KOKORO_MODEL = process.env.KOKORO_MODEL || 'kokoro';
+const KOKORO_DEFAULT_VOICE = process.env.KOKORO_DEFAULT_VOICE || 'af_heart';
+const PIPER_BINARY = process.env.PIPER_BINARY || '/opt/piper/piper';
+const PIPER_MODEL = process.env.PIPER_MODEL || '/opt/piper/voices/en_US-lessac-medium.onnx';
+const PIPER_DEFAULT_VOICE = process.env.PIPER_DEFAULT_VOICE || 'en_US-lessac-medium';
+const TTS_TIMEOUT_MS = Number(process.env.TTS_TIMEOUT_MS || 120000);
 const PROXY_API_KEY = process.env.PROXY_API_KEY;
 const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
 const SHOW_REASONING = parseBoolean(process.env.SHOW_REASONING, false);
@@ -119,6 +130,12 @@ app.get('/health', (_req, res) => {
     model_cache: registry.getCacheInfo(),
     reasoning_display: SHOW_REASONING,
     thinking_mode: ENABLE_THINKING_MODE,
+    tts: {
+      kokoro_api_base: KOKORO_API_BASE,
+      kokoro_configured: Boolean(KOKORO_API_BASE),
+      piper_binary: PIPER_BINARY,
+      piper_model: PIPER_MODEL,
+    },
   });
 });
 
@@ -310,6 +327,69 @@ app.post('/v1/chat/completions', async (req, res) => {
     res.status(status).json(openAiError(message, status >= 500 ? 'server_error' : 'invalid_request_error', status));
   }
 });
+
+app.get('/api/tts/providers', asyncHandler(async (_req, res) => {
+  res.json({
+    object: 'tts.provider_list',
+    data: await getTtsProviders(),
+  });
+}));
+
+app.post('/v1/audio/speech', asyncHandler(async (req, res) => {
+  const startedAt = Date.now();
+  const result = await synthesizeSpeech(req.body || {});
+
+  res.setHeader('Content-Type', result.contentType);
+  res.setHeader('X-TTS-Provider', result.provider);
+  res.setHeader('X-TTS-Elapsed-Ms', String(Date.now() - startedAt));
+  res.send(result.audio);
+}));
+
+app.post('/api/tts/benchmark', asyncHandler(async (req, res) => {
+  const providers = normalizeTtsProviders(req.body.providers);
+  const input = String(req.body.input || 'This is a short text to speech benchmark for the proxy.').slice(0, 4000);
+  const voice = req.body.voice;
+  const responseFormat = req.body.response_format || 'mp3';
+  const speed = req.body.speed;
+  const results = [];
+
+  for (const provider of providers) {
+    const startedAt = Date.now();
+    try {
+      const result = await synthesizeSpeech({
+        provider,
+        input,
+        voice,
+        response_format: provider === 'piper' ? 'wav' : responseFormat,
+        speed,
+      });
+      const elapsedMs = Date.now() - startedAt;
+      results.push({
+        provider,
+        ok: true,
+        elapsed_ms: elapsedMs,
+        input_chars: input.length,
+        chars_per_second: Number((input.length / Math.max(elapsedMs / 1000, 0.001)).toFixed(2)),
+        bytes: result.audio.length,
+        content_type: result.contentType,
+        audio_base64: result.audio.toString('base64'),
+      });
+    } catch (error) {
+      results.push({
+        provider,
+        ok: false,
+        elapsed_ms: Date.now() - startedAt,
+        input_chars: input.length,
+        error: error.message,
+      });
+    }
+  }
+
+  res.json({
+    object: 'tts.benchmark',
+    data: results,
+  });
+}));
 
 app.all('*', (req, res) => {
   res.status(404).json(openAiError(`Endpoint ${req.path} not found`, 'invalid_request_error', 404));
@@ -670,6 +750,201 @@ function getProviderConfig(provider) {
   }
 
   return config;
+}
+
+async function getTtsProviders() {
+  const [piperBinaryOk, piperModelOk, kokoroOk] = await Promise.all([
+    pathExists(PIPER_BINARY),
+    pathExists(PIPER_MODEL),
+    checkKokoro(),
+  ]);
+
+  return [
+    {
+      id: 'kokoro',
+      name: 'Kokoro',
+      type: 'http',
+      ready: kokoroOk,
+      api_base: KOKORO_API_BASE,
+      default_voice: KOKORO_DEFAULT_VOICE,
+      output_formats: ['mp3', 'wav', 'opus', 'flac', 'aac', 'pcm'],
+    },
+    {
+      id: 'piper',
+      name: 'Piper',
+      type: 'local-cli',
+      ready: piperBinaryOk && piperModelOk,
+      binary: PIPER_BINARY,
+      model: PIPER_MODEL,
+      default_voice: PIPER_DEFAULT_VOICE,
+      output_formats: ['wav'],
+    },
+  ];
+}
+
+async function checkKokoro() {
+  try {
+    const response = await axios.get(`${KOKORO_API_BASE}/models`, {
+      headers: buildOptionalBearerHeaders(KOKORO_API_KEY, false),
+      timeout: 3000,
+      validateStatus: () => true,
+    });
+    return response.status >= 200 && response.status < 500;
+  } catch {
+    return false;
+  }
+}
+
+async function synthesizeSpeech(body) {
+  const input = String(body.input || '').trim();
+  if (!input) {
+    throw Object.assign(new Error('input is required'), { status: 400 });
+  }
+
+  const provider = normalizeTtsProvider(body.provider || body.model);
+  if (provider === 'piper') {
+    return synthesizeWithPiper(body, input);
+  }
+
+  if (provider === 'kokoro') {
+    return synthesizeWithKokoro(body, input);
+  }
+
+  throw Object.assign(new Error(`Unsupported TTS provider "${provider}"`), { status: 400 });
+}
+
+async function synthesizeWithKokoro(body, input) {
+  const responseFormat = String(body.response_format || 'mp3').toLowerCase();
+  const response = await axios.post(`${KOKORO_API_BASE}/audio/speech`, {
+    model: body.model && !String(body.model).startsWith('tts:')
+      ? body.model
+      : KOKORO_MODEL,
+    input,
+    voice: body.voice || KOKORO_DEFAULT_VOICE,
+    response_format: responseFormat,
+    speed: body.speed || 1,
+  }, {
+    headers: {
+      ...buildOptionalBearerHeaders(KOKORO_API_KEY, false),
+      'Content-Type': 'application/json',
+    },
+    responseType: 'arraybuffer',
+    timeout: TTS_TIMEOUT_MS,
+    validateStatus: () => true,
+  });
+
+  if (response.status < 200 || response.status >= 300) {
+    const message = Buffer.from(response.data || '').toString('utf8') || response.statusText || 'Kokoro TTS failed';
+    throw Object.assign(new Error(message), { status: response.status });
+  }
+
+  return {
+    provider: 'kokoro',
+    audio: Buffer.from(response.data),
+    contentType: response.headers['content-type'] || audioContentType(responseFormat),
+  };
+}
+
+async function synthesizeWithPiper(body, input) {
+  if (!await pathExists(PIPER_BINARY)) {
+    throw Object.assign(new Error(`Piper binary not found: ${PIPER_BINARY}`), { status: 500 });
+  }
+
+  if (!await pathExists(PIPER_MODEL)) {
+    throw Object.assign(new Error(`Piper model not found: ${PIPER_MODEL}`), { status: 500 });
+  }
+
+  await fs.mkdir(TTS_OUTPUT_DIR, { recursive: true });
+  const outputFile = path.join(TTS_OUTPUT_DIR, `piper-${Date.now()}-${Math.random().toString(16).slice(2)}.wav`);
+  const args = ['--model', PIPER_MODEL, '--output_file', outputFile];
+
+  await runPiper(input, args);
+  const audio = await fs.readFile(outputFile);
+  fs.unlink(outputFile).catch(() => {});
+
+  return {
+    provider: 'piper',
+    audio,
+    contentType: 'audio/wav',
+  };
+}
+
+function runPiper(input, args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(PIPER_BINARY, args, {
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let stderr = '';
+    const timeout = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(Object.assign(new Error(`Piper timed out after ${TTS_TIMEOUT_MS}ms`), { status: 504 }));
+    }, TTS_TIMEOUT_MS);
+
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString('utf8');
+    });
+    child.on('error', (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.on('close', (code) => {
+      clearTimeout(timeout);
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(Object.assign(new Error(stderr.trim() || `Piper exited with code ${code}`), { status: 500 }));
+      }
+    });
+    child.stdin.end(input);
+  });
+}
+
+function normalizeTtsProviders(value) {
+  if (Array.isArray(value) && value.length > 0) {
+    return value.map(normalizeTtsProvider);
+  }
+  return ['kokoro', 'piper'];
+}
+
+function normalizeTtsProvider(value) {
+  const normalized = String(value || 'kokoro').toLowerCase().trim();
+  if (normalized.startsWith('tts:')) {
+    return normalized.slice(4);
+  }
+  if (normalized.includes('piper')) {
+    return 'piper';
+  }
+  if (normalized.includes('kokoro')) {
+    return 'kokoro';
+  }
+  return normalized;
+}
+
+function audioContentType(format) {
+  switch (format) {
+    case 'wav':
+      return 'audio/wav';
+    case 'opus':
+      return 'audio/ogg';
+    case 'flac':
+      return 'audio/flac';
+    case 'aac':
+      return 'audio/aac';
+    case 'pcm':
+      return 'audio/L16';
+    case 'mp3':
+    default:
+      return 'audio/mpeg';
+  }
+}
+
+async function pathExists(filePath) {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function buildProviderHeaders(provider, stream) {

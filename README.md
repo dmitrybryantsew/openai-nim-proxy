@@ -80,6 +80,14 @@ The UI asks for `PROXY_API_KEY` and stores it in browser local storage. Chats ar
 
 The UI also includes request settings for temperature, max tokens, top-p, presence penalty, and frequency penalty. They are saved in browser local storage and sent to the same OpenAI-compatible chat completion path used by API clients.
 
+Open the TTS benchmark UI:
+
+```text
+http://localhost:3000/tts.html
+```
+
+It uses the same `PROXY_API_KEY`, checks Kokoro/Piper readiness, generates test audio, and reports latency, bytes, and characters per second.
+
 Set at least:
 
 ```bash
@@ -129,6 +137,46 @@ curl -X POST http://localhost:3000/admin/models/test \
   -H "Authorization: Bearer replace-with-a-long-random-secret" \
   -H "Content-Type: application/json" \
   -d '{"model":"openrouter:nvidia/nemotron-3-ultra-550b-a55b:free"}'
+```
+
+## Text To Speech Probe
+
+The proxy includes an OpenAI-style speech endpoint for testing local TTS engines:
+
+```bash
+curl http://localhost:3000/v1/audio/speech \
+  -H "Authorization: Bearer replace-with-a-long-random-secret" \
+  -H "Content-Type: application/json" \
+  -o speech.mp3 \
+  -d '{"model":"tts:kokoro","voice":"af_heart","input":"Hello from Kokoro through the proxy.","response_format":"mp3"}'
+```
+
+Supported local providers:
+
+- `tts:kokoro` routes to Kokoro-FastAPI, default `KOKORO_API_BASE=http://127.0.0.1:8880/v1`.
+- `tts:piper` runs the local Piper CLI and returns WAV.
+
+Install both on an Ubuntu/Debian VPS:
+
+```bash
+cd /opt/openai-nim-proxy
+sudo bash scripts/install-tts-vps.sh
+```
+
+The installer runs Kokoro-FastAPI as a local Docker-backed systemd service, downloads Piper plus the `en_US-lessac-medium` voice, updates `/opt/openai-nim-proxy/.env`, and restarts the proxy.
+
+Run a command-line benchmark:
+
+```bash
+BASE_URL=http://127.0.0.1:3000 \
+  PROXY_API_KEY=replace-with-a-long-random-secret \
+  bash scripts/tts-benchmark.sh
+```
+
+Or open:
+
+```text
+http://your-server:3000/tts.html
 ```
 
 ## Tool calling
@@ -252,6 +300,14 @@ BASE_URL=http://your-server:3000 \
 | `MODEL_CACHE_TTL_MS` | `300000` | Cache duration for provider model lists. |
 | `MODEL_CACHE_FILE` | `data/models-cache.json` | Persistent model registry cache. |
 | `CHAT_DB_FILE` | `data/chats.sqlite` | SQLite database used by the built-in browser chat UI. |
+| `KOKORO_API_BASE` | `http://127.0.0.1:8880/v1` | Kokoro-FastAPI OpenAI-compatible endpoint. |
+| `KOKORO_MODEL` | `kokoro` | Model name sent to Kokoro-FastAPI. |
+| `KOKORO_DEFAULT_VOICE` | `af_heart` | Default Kokoro voice for `/v1/audio/speech`. |
+| `KOKORO_API_KEY` | none | Optional bearer token if Kokoro is behind an authenticating proxy. |
+| `PIPER_BINARY` | `/opt/piper/piper` | Piper CLI path. |
+| `PIPER_MODEL` | `/opt/piper/voices/en_US-lessac-medium.onnx` | Piper voice model path. |
+| `PIPER_DEFAULT_VOICE` | `en_US-lessac-medium` | Display/default label for Piper. |
+| `TTS_TIMEOUT_MS` | `120000` | TTS generation timeout. |
 | `SHOW_REASONING` | `false` | If true, exposes upstream reasoning in `<think>` tags. |
 | `ENABLE_THINKING_MODE` | `false` | Forces `chat_template_kwargs.enable_thinking=true`. |
 | `THINKING_MODELS` | none | Comma-separated public or provider model IDs that should get thinking enabled. |

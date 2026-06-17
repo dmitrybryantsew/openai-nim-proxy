@@ -5,7 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node --check src/model-registry.js && node --check src/chat-store.js && node --check public/app.js && node --check scripts/tool-call-probe.js && node --check scripts/hermes-tool-probe.js",
+    "check": "node --check server.js && node --check src/model-registry.js && node --check src/chat-store.js && node --check public/app.js && node --check public/tts.js && node --check scripts/tool-call-probe.js && node --check scripts/hermes-tool-probe.js",
     "smoke": "bash scripts/check.sh",
     "probe:tools": "node scripts/tool-call-probe.js",
     "probe:hermes": "node scripts/hermes-tool-probe.js"
