@@ -296,7 +296,7 @@ function renderMessages(messages) {
   }
 
   for (const message of messages) {
-    appendLocalMessage(message.role, message.content);
+    appendLocalMessage(message.role, message.content, message);
   }
 
   scrollMessages();
@@ -310,7 +310,7 @@ function renderEmpty(text) {
   elements.messages.appendChild(empty);
 }
 
-function appendLocalMessage(role, content) {
+function appendLocalMessage(role, content, metadata = {}) {
   const wrapper = document.createElement('article');
   wrapper.className = `message ${role}`;
 
@@ -323,8 +323,40 @@ function appendLocalMessage(role, content) {
   body.textContent = content;
 
   wrapper.append(label, body);
+
+  const footerText = formatMessageFooter(metadata);
+  if (footerText) {
+    const footer = document.createElement('div');
+    footer.className = 'message-footer';
+    footer.textContent = footerText;
+    wrapper.appendChild(footer);
+  }
+
   elements.messages.appendChild(wrapper);
   scrollMessages();
+}
+
+function formatMessageFooter(message) {
+  if (!message.provider && !message.model) {
+    return '';
+  }
+
+  const parts = [];
+  if (message.provider) {
+    parts.push(`provider: ${message.provider}`);
+  }
+
+  if (message.provider_model_id) {
+    parts.push(`provider model: ${message.provider_model_id}`);
+  } else if (message.model) {
+    parts.push(`model: ${message.model}`);
+  }
+
+  if (message.created_at) {
+    parts.push(new Date(message.created_at).toLocaleString());
+  }
+
+  return parts.join(' | ');
 }
 
 function removeThinkingMessage() {

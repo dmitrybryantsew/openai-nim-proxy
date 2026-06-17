@@ -298,6 +298,15 @@ textarea:focus {
   line-height: 1.5;
 }
 
+.message-footer {
+  margin-top: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 .composer {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

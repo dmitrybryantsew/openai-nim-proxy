@@ -23,6 +23,8 @@ class ChatStore {
         role TEXT NOT NULL,
         content TEXT NOT NULL,
         model TEXT,
+        provider TEXT,
+        provider_model_id TEXT,
         raw_json TEXT,
         created_at TEXT NOT NULL,
         FOREIGN KEY(chat_id) REFERENCES chats(id) ON DELETE CASCADE
@@ -31,6 +33,8 @@ class ChatStore {
       CREATE INDEX IF NOT EXISTS idx_messages_chat_id_id ON messages(chat_id, id);
       CREATE INDEX IF NOT EXISTS idx_chats_updated_at ON chats(updated_at);
     `);
+    ensureColumn(this.db, 'messages', 'provider', 'TEXT');
+    ensureColumn(this.db, 'messages', 'provider_model_id', 'TEXT');
   }
 
   listChats({ limit = 100 } = {}) {
@@ -110,23 +114,23 @@ class ChatStore {
 
   listMessages(chatId) {
     return this.db
-      .prepare('SELECT id, chat_id, role, content, model, created_at FROM messages WHERE chat_id = ? ORDER BY id ASC')
+      .prepare('SELECT id, chat_id, role, content, model, provider, provider_model_id, created_at FROM messages WHERE chat_id = ? ORDER BY id ASC')
       .all(chatId)
       .map(normalizeMessage);
   }
 
-  addMessage({ chatId, role, content, model, raw }) {
+  addMessage({ chatId, role, content, model, provider, providerModelId, raw }) {
     const now = new Date().toISOString();
     const result = this.db
-      .prepare('INSERT INTO messages (chat_id, role, content, model, raw_json, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(chatId, role, content, model || null, raw ? JSON.stringify(raw) : null, now);
+      .prepare('INSERT INTO messages (chat_id, role, content, model, provider, provider_model_id, raw_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(chatId, role, content, model || null, provider || null, providerModelId || null, raw ? JSON.stringify(raw) : null, now);
 
     this.db
       .prepare('UPDATE chats SET updated_at = ?, model = COALESCE(?, model) WHERE id = ?')
       .run(now, model || null, chatId);
 
     return this.db
-      .prepare('SELECT id, chat_id, role, content, model, created_at FROM messages WHERE id = ?')
+      .prepare('SELECT id, chat_id, role, content, model, provider, provider_model_id, created_at FROM messages WHERE id = ?')
       .get(Number(result.lastInsertRowid));
   }
 }
@@ -137,6 +141,15 @@ function safePragma(db, statement) {
   } catch (error) {
     console.warn(`SQLite pragma skipped: ${statement} (${error.message})`);
   }
+}
+
+function ensureColumn(db, tableName, columnName, columnType) {
+  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all();
+  if (columns.some((column) => column.name === columnName)) {
+    return;
+  }
+
+  db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnType}`);
 }
 
 function normalizeChat(chat) {

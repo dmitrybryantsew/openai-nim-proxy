@@ -221,36 +221,41 @@ app.post('/api/chats/:id/messages', asyncHandler(async (req, res) => {
     return res.status(400).json(openAiError('model is required', 'invalid_request_error', 400));
   }
 
+  const resolvedModel = await registry.resolveModel(modelId);
   const userMessage = chatStore.addMessage({
     chatId,
     role: 'user',
     content,
-    model: modelId,
+    model: resolvedModel.id,
+    provider: resolvedModel.provider,
+    providerModelId: resolvedModel.provider_model_id,
   });
 
   const messages = [
     ...chat.messages.map((message) => ({ role: message.role, content: message.content })),
     { role: 'user', content },
   ];
-  const completion = await createChatCompletion({
+  const { completion, model } = await createChatCompletion({
     ...req.body,
-    model: modelId,
+    model: resolvedModel.id,
     messages,
     stream: false,
-  });
+  }, resolvedModel);
   const assistantContent = completion.choices?.[0]?.message?.content || '';
   const assistantMessage = chatStore.addMessage({
     chatId,
     role: 'assistant',
     content: assistantContent,
-    model: modelId,
+    model: model.id,
+    provider: model.provider,
+    providerModelId: model.provider_model_id,
     raw: completion,
   });
 
   if (chat.title === 'New chat') {
     chatStore.updateChat(chatId, {
       title: makeChatTitle(content),
-      model: modelId,
+      model: model.id,
     });
   }
 
@@ -326,8 +331,8 @@ app.listen(PORT, () => {
   console.log(`Chat database: ${CHAT_DB_FILE}`);
 });
 
-async function createChatCompletion(body) {
-  const { response, model } = await requestChatCompletion(body, false);
+async function createChatCompletion(body, resolvedModel) {
+  const { response, model } = await requestChatCompletion(body, false, resolvedModel);
 
   if (response.status < 200 || response.status >= 300) {
     const upstreamError = response.data?.error;
@@ -335,11 +340,14 @@ async function createChatCompletion(body) {
     throw Object.assign(new Error(message), { status: response.status });
   }
 
-  return toOpenAiCompletion(response.data, model.id);
+  return {
+    completion: toOpenAiCompletion(response.data, model.id),
+    model,
+  };
 }
 
-async function requestChatCompletion(body, stream) {
-  const model = await registry.resolveModel(body.model);
+async function requestChatCompletion(body, stream, resolvedModel) {
+  const model = resolvedModel || await registry.resolveModel(body.model);
   const upstreamRequest = buildUpstreamRequest(body, model, stream);
   const upstream = getProviderConfig(model.provider);
 

@@ -76,7 +76,7 @@ Open the built-in chat UI:
 http://localhost:3000/
 ```
 
-The UI asks for `PROXY_API_KEY` and stores it in browser local storage. Chats are saved in SQLite at `data/chats.sqlite` by default.
+The UI asks for `PROXY_API_KEY` and stores it in browser local storage. Chats are saved in SQLite at `data/chats.sqlite` by default. New messages also store provider metadata, so the UI can show which provider and provider model produced a response.
 
 Set at least:
 
