@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>G4F Sidecar</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="tts-shell">
+      <header class="tts-header">
+        <div>
+          <h1>G4F Sidecar</h1>
+          <p>Experimental models and image generation</p>
+        </div>
+        <nav class="top-nav" aria-label="Tools">
+          <a class="secondary nav-link" href="/tools.html">Tools</a>
+          <a class="secondary nav-link" href="/">Chat</a>
+          <a class="secondary nav-link" href="/tts.html">TTS</a>
+        </nav>
+      </header>
+
+      <section class="tts-layout">
+        <form id="g4fForm" class="tts-controls">
+          <label class="field">
+            <span>Proxy key</span>
+            <input id="apiKeyInput" type="password" autocomplete="off" placeholder="Bearer key">
+          </label>
+
+          <div class="sidebar-actions">
+            <button id="saveKeyButton" type="button" class="secondary">Save key</button>
+            <button id="refreshButton" type="button">Refresh</button>
+          </div>
+
+          <label class="field">
+            <span>Model</span>
+            <input id="modelInput" type="text" list="modelList" placeholder="g4f:gpt-4o-mini">
+            <datalist id="modelList"></datalist>
+          </label>
+
+          <label class="field">
+            <span>Chat prompt</span>
+            <textarea id="chatPromptInput" rows="5">Reply with exactly: ok</textarea>
+          </label>
+
+          <button id="chatButton" type="button">Test chat</button>
+
+          <label class="field">
+            <span>Image prompt</span>
+            <textarea id="imagePromptInput" rows="5">A compact futuristic control panel, clean product render</textarea>
+          </label>
+
+          <div class="settings-grid">
+            <label class="field">
+              <span>Image model</span>
+              <input id="imageModelInput" type="text" placeholder="flux">
+            </label>
+            <label class="field">
+              <span>Size</span>
+              <input id="imageSizeInput" type="text" value="1024x1024">
+            </label>
+          </div>
+
+          <button id="imageButton" type="button">Generate image</button>
+        </form>
+
+        <section class="tts-results">
+          <div id="status" class="status">Enter proxy key, then refresh.</div>
+          <div id="sitePanel" class="tts-provider-list"></div>
+          <div id="models" class="tts-provider-list"></div>
+          <div id="results" class="tts-result-list"></div>
+        </section>
+      </section>
+    </main>
+
+    <script src="/g4f.js"></script>
+  </body>
+</html>

@@ -37,6 +37,7 @@ const SHOW_REASONING = parseBoolean(process.env.SHOW_REASONING, false);
 const ENABLE_THINKING_MODE = parseBoolean(process.env.ENABLE_THINKING_MODE, false);
 const THINKING_MODELS = parseCsv(process.env.THINKING_MODELS || 'nim:nvidia/nemotron-3-nano-omni-30b-a3b-reasoning,nvidia/nemotron-3-nano-omni-30b-a3b-reasoning');
 const NIM_FEATURED_MODELS = parseCsv(process.env.NIM_FEATURED_MODELS || 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning');
+const G4F_MODELS = parseCsv(process.env.G4F_MODELS || 'gpt-4o-mini,gpt-4o,gpt-3.5-turbo');
 
 const providers = {
   nim: {
@@ -51,6 +52,13 @@ const providers = {
     apiBase: trimTrailingSlash(process.env.OLLAMA_API_BASE || 'http://127.0.0.1:11434/v1'),
     apiKey: process.env.OLLAMA_API_KEY,
     enabled: parseBoolean(process.env.OLLAMA_ENABLED, true),
+  },
+  g4f: {
+    apiBase: trimTrailingSlash(process.env.G4F_API_BASE || 'http://127.0.0.1:1337/v1'),
+    apiKey: process.env.G4F_API_KEY,
+    enabled: parseBoolean(process.env.G4F_ENABLED, false),
+    webUrl: trimTrailingSlash(process.env.G4F_WEB_URL || 'http://127.0.0.1:8080'),
+    webPublicUrl: trimTrailingSlash(process.env.G4F_WEB_PUBLIC_URL || ''),
   },
   openrouter: {
     apiBase: trimTrailingSlash(process.env.OPENROUTER_API_BASE || 'https://openrouter.ai/api/v1'),
@@ -74,6 +82,10 @@ const registry = createModelRegistry({
   ollamaApiBase: providers.ollama.apiBase,
   ollamaApiKey: providers.ollama.apiKey,
   ollamaEnabled: providers.ollama.enabled,
+  g4fApiBase: providers.g4f.apiBase,
+  g4fApiKey: providers.g4f.apiKey,
+  g4fEnabled: providers.g4f.enabled,
+  g4fModels: G4F_MODELS,
   openRouterApiBase: providers.openrouter.apiBase,
   openRouterApiKey: providers.openrouter.apiKey,
   openRouterIncludePaid: providers.openrouter.includePaid,
@@ -126,6 +138,13 @@ app.get('/health', (_req, res) => {
         api_base: providers.ollama.apiBase,
         enabled: providers.ollama.enabled,
         api_key_configured: Boolean(providers.ollama.apiKey),
+      },
+      g4f: {
+        api_base: providers.g4f.apiBase,
+        enabled: providers.g4f.enabled,
+        api_key_configured: Boolean(providers.g4f.apiKey),
+        web_url: providers.g4f.webUrl,
+        web_public_url: providers.g4f.webPublicUrl || null,
       },
       openrouter: {
         api_base: providers.openrouter.apiBase,
@@ -338,6 +357,49 @@ app.post('/v1/chat/completions', async (req, res) => {
   }
 });
 
+app.get('/api/g4f/status', asyncHandler(async (_req, res) => {
+  const status = await getG4fStatus();
+  res.json({
+    object: 'g4f.status',
+    data: status,
+  });
+}));
+
+app.get('/api/g4f/models', asyncHandler(async (_req, res) => {
+  const status = await getG4fStatus();
+  res.json({
+    object: 'list',
+    data: status.models,
+  });
+}));
+
+app.post('/api/g4f/chat', asyncHandler(async (req, res) => {
+  const model = req.body.model || G4F_MODELS[0];
+  const response = await axios.post(`${getProviderConfig('g4f').apiBase}/chat/completions`, {
+    model: stripG4fPrefix(model),
+    messages: req.body.messages || [{ role: 'user', content: req.body.prompt || 'Reply with exactly: ok' }],
+    temperature: req.body.temperature ?? 0.7,
+    max_tokens: req.body.max_tokens ?? 512,
+    stream: false,
+  }, {
+    headers: buildProviderHeaders('g4f', false),
+    timeout: REQUEST_TIMEOUT_MS,
+    validateStatus: () => true,
+  });
+
+  res.status(response.status).json(response.data);
+}));
+
+app.post('/api/g4f/images', asyncHandler(async (req, res) => {
+  const response = await requestG4fImageGeneration(req.body || {});
+  res.status(response.status).json(response.data);
+}));
+
+app.post('/v1/images/generations', asyncHandler(async (req, res) => {
+  const response = await requestG4fImageGeneration(req.body || {});
+  res.status(response.status).json(response.data);
+}));
+
 app.get('/api/tts/providers', asyncHandler(async (_req, res) => {
   res.json({
     object: 'tts.provider_list',
@@ -458,6 +520,7 @@ app.listen(PORT, () => {
   console.log(`NVIDIA API base: ${providers.nim.apiBase}`);
   console.log(`Chutes API base: ${providers.chutes.apiBase}`);
   console.log(`Ollama API base: ${providers.ollama.apiBase}`);
+  console.log(`GPT4Free API base: ${providers.g4f.apiBase} (${providers.g4f.enabled ? 'enabled' : 'disabled'})`);
   console.log(`OpenRouter API base: ${providers.openrouter.apiBase}`);
   console.log(`Model cache: ${MODEL_CACHE_FILE}`);
   console.log(`Chat database: ${CHAT_DB_FILE}`);
@@ -797,11 +860,94 @@ function getProviderConfig(provider) {
     return config;
   }
 
+  if (provider === 'g4f') {
+    if (!config.enabled) {
+      throw Object.assign(new Error('G4F_ENABLED must be true to use GPT4Free sidecar models'), { status: 500 });
+    }
+
+    return config;
+  }
+
   if (!config.apiKey) {
     throw Object.assign(new Error(`${provider.toUpperCase()}_API_KEY is required for chat completions and tests`), { status: 500 });
   }
 
   return config;
+}
+
+async function getG4fStatus() {
+  const status = {
+    enabled: providers.g4f.enabled,
+    api_base: providers.g4f.apiBase,
+    web_url: providers.g4f.webUrl,
+    web_public_url: providers.g4f.webPublicUrl || null,
+    ready: false,
+    models: [],
+    error: null,
+  };
+
+  if (!providers.g4f.enabled) {
+    status.error = 'G4F_ENABLED is false';
+    return status;
+  }
+
+  try {
+    const response = await axios.get(`${providers.g4f.apiBase}/models`, {
+      headers: buildProviderHeaders('g4f', false),
+      timeout: Number(process.env.G4F_STATUS_TIMEOUT_MS || 5000),
+      validateStatus: () => true,
+    });
+
+    status.ready = response.status >= 200 && response.status < 300;
+    status.models = (response.data?.data || [])
+      .filter((model) => model?.id)
+      .map((model) => ({
+        id: `g4f:${model.id}`,
+        provider_model_id: model.id,
+        name: model.name || model.id,
+        owned_by: model.owned_by || 'gpt4free',
+      }));
+
+    if (!status.ready) {
+      status.error = response.data?.error?.message || response.statusText || `HTTP ${response.status}`;
+    }
+  } catch (error) {
+    status.error = error.message;
+  }
+
+  if (status.models.length === 0) {
+    status.models = G4F_MODELS.map((model) => ({
+      id: `g4f:${model}`,
+      provider_model_id: model,
+      name: model,
+      owned_by: 'gpt4free',
+      fallback: true,
+    }));
+  }
+
+  return status;
+}
+
+async function requestG4fImageGeneration(body) {
+  const provider = getProviderConfig('g4f');
+  const request = {
+    ...body,
+    model: stripG4fPrefix(body.model || process.env.G4F_IMAGE_MODEL || 'flux'),
+  };
+
+  const response = await axios.post(`${provider.apiBase}/images/generations`, request, {
+    headers: buildProviderHeaders('g4f', false),
+    timeout: REQUEST_TIMEOUT_MS,
+    validateStatus: () => true,
+  });
+
+  return response;
+}
+
+function stripG4fPrefix(model) {
+  return String(model || '').startsWith('g4f:')
+    ? String(model).slice('g4f:'.length)
+    : String(model || '');
 }
 
 async function getTtsProviders() {
@@ -1173,6 +1319,13 @@ function buildProviderHeaders(provider, stream) {
   if (provider === 'ollama') {
     return {
       ...buildOptionalBearerHeaders(providers.ollama.apiKey, stream),
+      'Content-Type': 'application/json',
+    };
+  }
+
+  if (provider === 'g4f') {
+    return {
+      ...buildOptionalBearerHeaders(providers.g4f.apiKey, stream),
       'Content-Type': 'application/json',
     };
   }

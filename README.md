@@ -1,12 +1,13 @@
 # openai-nim-proxy
 
-OpenAI-compatible proxy for NVIDIA NIM, Chutes, Ollama, and OpenRouter models.
+OpenAI-compatible proxy for NVIDIA NIM, Chutes, Ollama, GPT4Free sidecar, and OpenRouter models.
 
 The proxy keeps OpenAI-style endpoints, but it does not fake OpenAI model aliases. It exposes real provider models with explicit IDs:
 
 - `nim:<nvidia-model-id>`
 - `chutes:<chutes-model-id>`
 - `ollama:<ollama-model-name>`
+- `g4f:<gpt4free-model-name>`
 - `openrouter:<openrouter-model-id>`
 
 Example: `openrouter:nvidia/nemotron-3-ultra-550b-a55b:free`.
@@ -20,6 +21,7 @@ Sources:
 - NVIDIA NIM: `GET {NIM_API_BASE}/models`, when `NIM_API_KEY` is configured.
 - Chutes: `GET {CHUTES_API_BASE}/models`, when `CHUTES_API_KEY` is configured.
 - Ollama: `GET {OLLAMA_API_BASE}/models`, when `OLLAMA_ENABLED=true`.
+- GPT4Free sidecar: `GET {G4F_API_BASE}/models`, when `G4F_ENABLED=true`. If the sidecar does not return models, `G4F_MODELS` is used as a fallback list.
 - OpenRouter: `GET {OPENROUTER_API_BASE}/models`. By default only free text-only-output models are exposed.
 
 OpenRouter free filtering uses `:free` model IDs and zero prompt/completion pricing. NVIDIA's model list does not expose comparable free-pricing metadata, so NIM models are treated as models available to the configured NVIDIA key.
@@ -45,6 +47,10 @@ curl "http://localhost:3000/v1/models?provider=chutes" \
 
 # Ollama models only
 curl "http://localhost:3000/v1/models?provider=ollama" \
+  -H "Authorization: Bearer replace-with-a-long-random-secret"
+
+# GPT4Free sidecar models only
+curl "http://localhost:3000/v1/models?provider=g4f" \
   -H "Authorization: Bearer replace-with-a-long-random-secret"
 ```
 
@@ -86,6 +92,18 @@ Open the TTS benchmark UI:
 http://localhost:3000/tts.html
 ```
 
+Open the GPT4Free sidecar tool page:
+
+```text
+http://localhost:3000/g4f.html
+```
+
+Open the page index:
+
+```text
+http://localhost:3000/tools.html
+```
+
 It uses the same `PROXY_API_KEY`, checks Kokoro/KittenTTS/Piper readiness, generates test audio, and reports latency, bytes, and characters per second.
 
 Set at least:
@@ -107,6 +125,17 @@ ollama pull llama3.2
 ```
 
 Then use model IDs like `ollama:llama3.2`.
+
+GPT4Free is optional and intentionally runs as a separate sidecar. It is useful for experimental extra models and image generation, but it can be heavier and less stable than the direct provider APIs:
+
+```bash
+G4F_ENABLED=true
+G4F_API_BASE=http://127.0.0.1:1337/v1
+G4F_WEB_URL=http://127.0.0.1:8080
+G4F_MODELS=gpt-4o-mini,gpt-4o,gpt-3.5-turbo
+```
+
+Then use model IDs like `g4f:gpt-4o-mini`.
 
 Health check:
 
@@ -137,6 +166,59 @@ curl -X POST http://localhost:3000/admin/models/test \
   -H "Authorization: Bearer replace-with-a-long-random-secret" \
   -H "Content-Type: application/json" \
   -d '{"model":"openrouter:nvidia/nemotron-3-ultra-550b-a55b:free"}'
+```
+
+Generate an image through the GPT4Free sidecar:
+
+```bash
+curl http://localhost:3000/v1/images/generations \
+  -H "Authorization: Bearer replace-with-a-long-random-secret" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"g4f:flux","prompt":"A clean technical diagram of a proxy server","size":"1024x1024","response_format":"b64_json"}'
+```
+
+## GPT4Free Sidecar
+
+The proxy can route chat and image calls to a local GPT4Free sidecar without copying GPT4Free code into this repository:
+
+- Chat models appear as `g4f:<model>`.
+- `/api/g4f/status` checks sidecar readiness and returns discovered or fallback models.
+- `/api/g4f/chat` sends a small non-streaming chat request to the sidecar.
+- `/api/g4f/images` and `/v1/images/generations` forward image generation requests to `{G4F_API_BASE}/images/generations`.
+- `/g4f.html` provides a browser page for status, chat tests, image tests, and an optional link to the upstream GPT4Free web UI.
+
+Install on a VPS as a sidecar:
+
+```bash
+cd /opt/openai-nim-proxy
+sudo bash scripts/install-g4f-vps.sh
+```
+
+The installer runs the sidecar in Docker as `g4f-sidecar`, binds the API and web UI to `127.0.0.1` by default, writes `G4F_ENABLED=true` to `/opt/openai-nim-proxy/.env`, and restarts the proxy.
+
+Useful install variables:
+
+```bash
+G4F_IMAGE=hlohaus789/g4f:latest
+G4F_API_PORT=1337
+G4F_WEB_PORT=8080
+G4F_BIND=127.0.0.1
+G4F_MODELS=gpt-4o-mini,gpt-4o,gpt-3.5-turbo
+G4F_DOCKER_ARGS="--shm-size=512m"
+```
+
+If you want the upstream GPT4Free web UI to be reachable directly from a browser, expose it deliberately:
+
+```bash
+sudo G4F_BIND=0.0.0.0 G4F_PUBLIC_HOST=your-domain.example bash scripts/install-g4f-vps.sh
+```
+
+On a small VPS, keep this optional. If memory or swap pressure returns, disable it:
+
+```bash
+systemctl disable --now g4f-sidecar
+sed -i 's/^G4F_ENABLED=.*/G4F_ENABLED=false/' /opt/openai-nim-proxy/.env
+systemctl restart openai-nim-proxy
 ```
 
 ## Text To Speech Probe
@@ -330,6 +412,13 @@ BASE_URL=http://your-server:3000 \
 | `OLLAMA_ENABLED` | `true` | If true, tries to list and route local/self-hosted Ollama models. |
 | `OLLAMA_API_BASE` | `http://127.0.0.1:11434/v1` | Ollama OpenAI-compatible endpoint. |
 | `OLLAMA_API_KEY` | none | Optional bearer token if Ollama is behind an authenticating proxy. |
+| `G4F_ENABLED` | `false` | Enables the optional GPT4Free sidecar provider. |
+| `G4F_API_BASE` | `http://127.0.0.1:1337/v1` | GPT4Free OpenAI-compatible sidecar endpoint. |
+| `G4F_API_KEY` | none | Optional bearer token if the sidecar is protected. |
+| `G4F_WEB_URL` | `http://127.0.0.1:8080` | Server-side upstream GPT4Free web UI URL. |
+| `G4F_WEB_PUBLIC_URL` | none | Browser-accessible GPT4Free web UI URL shown on `/g4f.html`. |
+| `G4F_MODELS` | `gpt-4o-mini,gpt-4o,gpt-3.5-turbo` | Fallback comma-separated sidecar models. |
+| `G4F_IMAGE_MODEL` | `flux` | Default model sent to image generation when omitted. |
 | `OPENROUTER_API_BASE` | `https://openrouter.ai/api/v1` | OpenRouter OpenAI-compatible endpoint. |
 | `OPENROUTER_API_KEY` | none | Required for OpenRouter chat completions and tests. |
 | `OPENROUTER_INCLUDE_PAID` | `false` | If true, exposes paid OpenRouter models too. |

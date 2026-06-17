@@ -15,6 +15,10 @@ function createModelRegistry(options) {
     ollamaApiBase: trimTrailingSlash(options.ollamaApiBase),
     ollamaApiKey: options.ollamaApiKey,
     ollamaEnabled: options.ollamaEnabled,
+    g4fApiBase: trimTrailingSlash(options.g4fApiBase),
+    g4fApiKey: options.g4fApiKey,
+    g4fEnabled: options.g4fEnabled,
+    g4fModels: options.g4fModels || [],
     openRouterApiBase: trimTrailingSlash(options.openRouterApiBase),
     openRouterApiKey: options.openRouterApiKey,
     openRouterIncludePaid: options.openRouterIncludePaid,
@@ -35,10 +39,11 @@ function createModelRegistry(options) {
   }
 
   async function refreshModels() {
-    const [nimModels, chutesModels, ollamaModels, openRouterModels] = await Promise.all([
+    const [nimModels, chutesModels, ollamaModels, g4fModels, openRouterModels] = await Promise.all([
       fetchNimModels(config).catch(() => []),
       fetchChutesModels(config).catch(() => []),
       fetchOllamaModels(config).catch(() => []),
+      fetchG4fModels(config).catch(() => buildConfiguredG4fModels(config)),
       fetchOpenRouterModels(config).catch(() => []),
     ]);
 
@@ -47,6 +52,7 @@ function createModelRegistry(options) {
       ...nimModels,
       ...chutesModels,
       ...ollamaModels,
+      ...g4fModels,
       ...openRouterModels,
     ]).sort((a, b) => {
       if (a.provider !== b.provider) {
@@ -82,7 +88,7 @@ function createModelRegistry(options) {
     }
 
     throw Object.assign(
-      new Error(`Unknown model "${publicModelId}". Refresh /v1/models or use provider-prefixed IDs like "nim:<model>", "ollama:<model>", or "openrouter:<model>".`),
+      new Error(`Unknown model "${publicModelId}". Refresh /v1/models or use provider-prefixed IDs like "nim:<model>", "ollama:<model>", "g4f:<model>", or "openrouter:<model>".`),
       { status: 400 },
     );
   }
@@ -233,6 +239,65 @@ async function fetchOllamaModels(config) {
     }));
 }
 
+async function fetchG4fModels(config) {
+  if (!config.g4fEnabled) {
+    return [];
+  }
+
+  const response = await axios.get(`${config.g4fApiBase}/models`, {
+    headers: buildOptionalBearerHeaders(config.g4fApiKey, false),
+    timeout: config.requestTimeoutMs,
+    validateStatus: () => true,
+  });
+
+  if (response.status < 200 || response.status >= 300) {
+    return buildConfiguredG4fModels(config);
+  }
+
+  const models = (response.data?.data || [])
+    .filter((model) => model?.id)
+    .map((model) => buildG4fModel(model.id, {
+      created: Number(model.created || 0),
+      ownedBy: model.owned_by || 'gpt4free',
+      name: model.name || model.id,
+      source: 'g4f',
+    }));
+
+  return models.length > 0 ? models : buildConfiguredG4fModels(config);
+}
+
+function buildConfiguredG4fModels(config) {
+  if (!config.g4fEnabled) {
+    return [];
+  }
+
+  return config.g4fModels.map((modelId) => buildG4fModel(modelId, {
+    ownedBy: 'gpt4free',
+    name: modelId,
+    source: 'configured-g4f',
+  }));
+}
+
+function buildG4fModel(modelId, options = {}) {
+  return {
+    id: `g4f:${modelId}`,
+    object: 'model',
+    created: options.created || 0,
+    owned_by: options.ownedBy || 'gpt4free',
+    provider: 'g4f',
+    provider_model_id: modelId,
+    name: options.name || modelId,
+    free: true,
+    pricing: {
+      prompt: '0',
+      completion: '0',
+    },
+    context_length: null,
+    source: options.source || 'g4f',
+    experimental: true,
+  };
+}
+
 async function fetchOpenRouterModels(config) {
   const response = await axios.get(`${config.openRouterApiBase}/models`, {
     headers: buildOpenRouterHeaders(config, false),
@@ -315,6 +380,13 @@ function parseDirectModel(publicModelId) {
     }
   }
 
+  if (publicModelId.startsWith('g4f:')) {
+    const providerModelId = publicModelId.slice('g4f:'.length);
+    if (providerModelId) {
+      return directModel('g4f', providerModelId, publicModelId);
+    }
+  }
+
   return null;
 }
 
@@ -327,7 +399,7 @@ function directModel(provider, providerModelId, publicModelId) {
     provider,
     provider_model_id: providerModelId,
     name: providerModelId,
-    free: provider === 'openrouter' ? providerModelId.endsWith(':free') : provider === 'ollama' ? true : null,
+    free: provider === 'openrouter' ? providerModelId.endsWith(':free') : ['ollama', 'g4f'].includes(provider) ? true : null,
     source: 'direct',
   };
 }
