@@ -160,6 +160,28 @@ textarea:focus {
   grid-template-columns: repeat(3, 1fr);
 }
 
+.request-settings {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 10px;
+}
+
+.request-settings summary {
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 10px;
+}
+
 .filter {
   border-color: var(--border);
   background: #ffffff;

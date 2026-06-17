@@ -78,6 +78,8 @@ http://localhost:3000/
 
 The UI asks for `PROXY_API_KEY` and stores it in browser local storage. Chats are saved in SQLite at `data/chats.sqlite` by default. New messages also store provider metadata, so the UI can show which provider and provider model produced a response.
 
+The UI also includes request settings for temperature, max tokens, top-p, presence penalty, and frequency penalty. They are saved in browser local storage and sent to the same OpenAI-compatible chat completion path used by API clients.
+
 Set at least:
 
 ```bash
@@ -213,6 +215,8 @@ Then open:
 ```text
 http://your-server:3000/
 ```
+
+OpenAI-compatible clients can use either the server root or `/v1`, depending on the client. For example, the Obsidian plugin proxy provider accepts `http://obsidianvault.duckdns.org:3000` and normalizes it to `/v1` before loading models or sending chat requests.
 
 Remote smoke check:
 

@@ -5,6 +5,7 @@ const state = {
   activeChatId: null,
   activeFilter: 'all',
   busy: false,
+  requestSettings: loadRequestSettings(),
 };
 
 const elements = {
@@ -14,6 +15,11 @@ const elements = {
   newChatButton: document.getElementById('newChatButton'),
   deleteChatButton: document.getElementById('deleteChatButton'),
   modelSelect: document.getElementById('modelSelect'),
+  temperatureInput: document.getElementById('temperatureInput'),
+  maxTokensInput: document.getElementById('maxTokensInput'),
+  topPInput: document.getElementById('topPInput'),
+  presencePenaltyInput: document.getElementById('presencePenaltyInput'),
+  frequencyPenaltyInput: document.getElementById('frequencyPenaltyInput'),
   chatList: document.getElementById('chatList'),
   status: document.getElementById('status'),
   chatTitle: document.getElementById('chatTitle'),
@@ -25,6 +31,11 @@ const elements = {
 };
 
 elements.apiKeyInput.value = state.apiKey;
+elements.temperatureInput.value = state.requestSettings.temperature;
+elements.maxTokensInput.value = state.requestSettings.max_tokens;
+elements.topPInput.value = state.requestSettings.top_p;
+elements.presencePenaltyInput.value = state.requestSettings.presence_penalty;
+elements.frequencyPenaltyInput.value = state.requestSettings.frequency_penalty;
 
 elements.saveKeyButton.addEventListener('click', async () => {
   state.apiKey = elements.apiKeyInput.value.trim();
@@ -39,6 +50,15 @@ elements.modelSelect.addEventListener('change', saveActiveChatModel);
 elements.chatTitle.addEventListener('change', saveActiveChatTitle);
 elements.composer.addEventListener('submit', sendMessage);
 elements.messageInput.addEventListener('input', resizeComposer);
+for (const input of [
+  elements.temperatureInput,
+  elements.maxTokensInput,
+  elements.topPInput,
+  elements.presencePenaltyInput,
+  elements.frequencyPenaltyInput,
+]) {
+  input.addEventListener('change', saveRequestSettings);
+}
 elements.messageInput.addEventListener('keydown', (event) => {
   if (event.key === 'Enter' && !event.shiftKey) {
     event.preventDefault();
@@ -222,7 +242,11 @@ async function sendMessage(event) {
   try {
     const data = await api(`/api/chats/${state.activeChatId}/messages`, {
       method: 'POST',
-      body: JSON.stringify({ content, model }),
+      body: JSON.stringify({
+        content,
+        model,
+        ...state.requestSettings,
+      }),
     });
     renderMessages(data.data.chat.messages || []);
     elements.chatTitle.value = data.data.chat.title || 'New chat';
@@ -378,6 +402,50 @@ function scrollMessages() {
 
 function setStatus(text) {
   elements.status.textContent = text;
+}
+
+function loadRequestSettings() {
+  const defaults = {
+    temperature: 0.7,
+    max_tokens: 4096,
+    top_p: 1,
+    presence_penalty: 0,
+    frequency_penalty: 0,
+  };
+
+  try {
+    return {
+      ...defaults,
+      ...JSON.parse(localStorage.getItem('openai-nim-proxy-request-settings') || '{}'),
+    };
+  } catch {
+    return defaults;
+  }
+}
+
+function saveRequestSettings() {
+  state.requestSettings = {
+    temperature: clampNumber(elements.temperatureInput.value, 0, 2, 0.7),
+    max_tokens: Math.max(1, Math.round(clampNumber(elements.maxTokensInput.value, 1, Number.MAX_SAFE_INTEGER, 4096))),
+    top_p: clampNumber(elements.topPInput.value, 0, 1, 1),
+    presence_penalty: clampNumber(elements.presencePenaltyInput.value, -2, 2, 0),
+    frequency_penalty: clampNumber(elements.frequencyPenaltyInput.value, -2, 2, 0),
+  };
+
+  elements.temperatureInput.value = state.requestSettings.temperature;
+  elements.maxTokensInput.value = state.requestSettings.max_tokens;
+  elements.topPInput.value = state.requestSettings.top_p;
+  elements.presencePenaltyInput.value = state.requestSettings.presence_penalty;
+  elements.frequencyPenaltyInput.value = state.requestSettings.frequency_penalty;
+  localStorage.setItem('openai-nim-proxy-request-settings', JSON.stringify(state.requestSettings));
+}
+
+function clampNumber(value, min, max, fallback) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.min(max, Math.max(min, parsed));
 }
 
 function isTextOnly(model) {
