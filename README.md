@@ -174,6 +174,16 @@ BASE_URL=http://127.0.0.1:3000 \
   bash scripts/tts-benchmark.sh
 ```
 
+By default the benchmark runs one warmup request and three measured repeats, using WAV to avoid measuring MP3 encoding overhead. Override it with `WARMUP`, `REPEAT`, and `RESPONSE_FORMAT`.
+
+Warm the local TTS engines after restart:
+
+```bash
+BASE_URL=http://127.0.0.1:3000 \
+  PROXY_API_KEY=replace-with-a-long-random-secret \
+  bash scripts/warmup-tts.sh
+```
+
 Benchmark a specific KittenTTS size:
 
 ```bash
@@ -189,6 +199,13 @@ Or open:
 ```text
 http://your-server:3000/tts.html
 ```
+
+Kokoro speed notes:
+
+- Use `response_format=wav` or `pcm` while benchmarking. MP3/AAC can add encoding time.
+- Compare cold and warm runs. First request after container start can include model load.
+- If the VPS has an NVIDIA GPU, install Docker NVIDIA runtime and run `scripts/install-tts-vps.sh` with a GPU Kokoro image by setting `KOKORO_IMAGE`.
+- If the VPS is CPU-only, keep Kokoro local on `127.0.0.1` and benchmark shorter chunks; very long text should be split client-side or by a future queue/chunker.
 
 ## Tool calling
 

@@ -362,36 +362,75 @@ app.post('/api/tts/benchmark', asyncHandler(async (req, res) => {
   const speed = req.body.speed;
   const modelsByProvider = req.body.models && typeof req.body.models === 'object' ? req.body.models : {};
   const requestedModel = req.body.model;
+  const repeat = Math.min(Math.max(Number(req.body.repeat || 1), 1), 20);
+  const warmup = Math.min(Math.max(Number(req.body.warmup || 0), 0), 5);
   const results = [];
 
   for (const provider of providers) {
-    const startedAt = Date.now();
     try {
-      const result = await synthesizeSpeech({
+      const request = {
         provider,
         input,
         voice,
         model: modelsByProvider[provider] || requestedModel,
         response_format: provider === 'piper' ? 'wav' : responseFormat,
         speed,
-      });
-      const elapsedMs = Date.now() - startedAt;
+      };
+
+      for (let i = 0; i < warmup; i += 1) {
+        await synthesizeSpeech(request);
+      }
+
+      const samples = [];
+      let bestResult = null;
+      for (let i = 0; i < repeat; i += 1) {
+        const startedAt = Date.now();
+        const result = await synthesizeSpeech(request);
+        const elapsedMs = Date.now() - startedAt;
+        const sample = {
+          elapsed_ms: elapsedMs,
+          chars_per_second: Number((input.length / Math.max(elapsedMs / 1000, 0.001)).toFixed(2)),
+          bytes: result.audio.length,
+        };
+        samples.push(sample);
+
+        if (!bestResult || elapsedMs < bestResult.elapsedMs) {
+          bestResult = {
+            elapsedMs,
+            result,
+          };
+        }
+      }
+
+      const elapsedValues = samples.map((sample) => sample.elapsed_ms);
+      const avgElapsedMs = Math.round(elapsedValues.reduce((sum, value) => sum + value, 0) / elapsedValues.length);
+      const minElapsedMs = Math.min(...elapsedValues);
+      const maxElapsedMs = Math.max(...elapsedValues);
+
       results.push({
         provider,
         ok: true,
-        elapsed_ms: elapsedMs,
+        elapsed_ms: avgElapsedMs,
+        avg_elapsed_ms: avgElapsedMs,
+        min_elapsed_ms: minElapsedMs,
+        max_elapsed_ms: maxElapsedMs,
         input_chars: input.length,
-        chars_per_second: Number((input.length / Math.max(elapsedMs / 1000, 0.001)).toFixed(2)),
-        bytes: result.audio.length,
-        content_type: result.contentType,
-        audio_base64: result.audio.toString('base64'),
+        chars_per_second: Number((input.length / Math.max(avgElapsedMs / 1000, 0.001)).toFixed(2)),
+        repeat,
+        warmup,
+        samples,
+        bytes: bestResult.result.audio.length,
+        content_type: bestResult.result.contentType,
+        audio_base64: bestResult.result.audio.toString('base64'),
       });
     } catch (error) {
       results.push({
         provider,
         ok: false,
-        elapsed_ms: Date.now() - startedAt,
+        elapsed_ms: 0,
         input_chars: input.length,
+        repeat,
+        warmup,
         error: error.message,
       });
     }

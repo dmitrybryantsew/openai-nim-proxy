@@ -14,6 +14,8 @@ const elements = {
   voiceInput: document.getElementById('voiceInput'),
   formatSelect: document.getElementById('formatSelect'),
   speedInput: document.getElementById('speedInput'),
+  warmupInput: document.getElementById('warmupInput'),
+  repeatInput: document.getElementById('repeatInput'),
   textInput: document.getElementById('textInput'),
   runButton: document.getElementById('runButton'),
   status: document.getElementById('status'),
@@ -112,6 +114,8 @@ async function runBenchmark(event) {
         models,
         response_format: elements.formatSelect.value,
         speed: Number(elements.speedInput.value) || 1,
+        warmup: Math.max(0, Math.round(Number(elements.warmupInput.value) || 0)),
+        repeat: Math.max(1, Math.round(Number(elements.repeatInput.value) || 1)),
       }),
     });
     renderResults(data.data || []);
@@ -171,7 +175,7 @@ function renderResults(results) {
 
     const stats = document.createElement('span');
     stats.textContent = result.ok
-      ? `${result.elapsed_ms}ms | ${result.chars_per_second} chars/s | ${result.bytes} bytes`
+      ? `avg ${result.avg_elapsed_ms || result.elapsed_ms}ms | min ${result.min_elapsed_ms || result.elapsed_ms}ms | max ${result.max_elapsed_ms || result.elapsed_ms}ms | ${result.chars_per_second} chars/s | ${result.bytes} bytes`
       : result.error;
     item.appendChild(stats);
 
