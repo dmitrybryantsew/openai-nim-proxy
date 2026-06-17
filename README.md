@@ -129,6 +129,34 @@ curl -X POST http://localhost:3000/admin/models/test \
   -d '{"model":"openrouter:nvidia/nemotron-3-ultra-550b-a55b:free"}'
 ```
 
+## Tool calling
+
+The proxy passes OpenAI-style tool-calling fields through to upstream providers:
+
+- `tools`
+- `tool_choice`
+- `parallel_tool_calls`
+- legacy `functions` / `function_call`
+
+It also preserves returned `tool_calls` in non-streaming and streaming responses. Tool execution is still the client application's job; the proxy only routes the model request and response.
+
+Local deterministic probe:
+
+```bash
+npm run probe:tools
+```
+
+This starts a mock upstream provider and verifies tool-call pass-through without using provider credits.
+
+Hermes end-to-end probe, when Hermes is installed locally:
+
+```powershell
+$env:HERMES_EXE='E:\agent coding\hermes-agent\.venv-local\Scripts\hermes.exe'
+npm run probe:hermes
+```
+
+This uses a temporary Hermes home under `data/hermes-probe-home`, sends tools through the proxy, receives a streaming tool call, executes Hermes' `read_file` tool, and sends the tool result back.
+
 Test the first 5 OpenRouter models currently in the registry:
 
 ```bash

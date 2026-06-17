@@ -300,7 +300,7 @@ app.post('/v1/chat/completions', async (req, res) => {
     }
 
     if (stream) {
-      return pipeStreamingResponse(response, res);
+      return pipeStreamingResponse(response, res, model.id);
     }
 
     res.json(toOpenAiCompletion(response.data, model.id));
@@ -457,9 +457,15 @@ function buildUpstreamRequest(body, model, stream) {
     'frequency_penalty',
     'tools',
     'tool_choice',
+    'parallel_tool_calls',
+    'functions',
+    'function_call',
     'response_format',
     'seed',
     'user',
+    'stream_options',
+    'logprobs',
+    'top_logprobs',
   ];
 
   const request = {
@@ -522,7 +528,10 @@ function toOpenAiCompletion(data, publicModelId) {
     model: publicModelId,
     choices: (data.choices || []).map((choice, index) => {
       const message = choice.message || {};
-      const content = withReasoning(message.content || '', message.reasoning_content);
+      const hasToolCalls = Array.isArray(message.tool_calls) && message.tool_calls.length > 0;
+      const content = message.content == null && hasToolCalls
+        ? null
+        : withReasoning(message.content || '', message.reasoning_content);
 
       return {
         index: choice.index ?? index,
@@ -542,7 +551,7 @@ function toOpenAiCompletion(data, publicModelId) {
   };
 }
 
-function pipeStreamingResponse(response, res) {
+function pipeStreamingResponse(response, res, publicModelId) {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
@@ -569,6 +578,9 @@ function pipeStreamingResponse(response, res) {
 
       try {
         const data = JSON.parse(payload);
+        if (publicModelId) {
+          data.model = publicModelId;
+        }
         const delta = data.choices?.[0]?.delta;
 
         if (delta) {
