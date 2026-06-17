@@ -154,7 +154,7 @@ curl http://localhost:3000/v1/audio/speech \
 Supported local providers:
 
 - `tts:kokoro` routes to Kokoro-FastAPI, default `KOKORO_API_BASE=http://127.0.0.1:8880/v1`.
-- `tts:kittentts` runs the KittenTTS Python wrapper installed by `scripts/install-tts-vps.sh`. You can also point it at an HTTP endpoint with `KITTENTTS_API_BASE`.
+- `tts:kittentts` runs the KittenTTS Python wrapper installed by `scripts/install-tts-vps.sh`. You can test the documented KittenTTS sizes from the TTS page: mini 80M, micro 40M, nano 15M, and nano int8. You can also point it at an HTTP endpoint with `KITTENTTS_API_BASE`.
 - `tts:piper` runs the local Piper CLI and returns WAV.
 
 Install both on an Ubuntu/Debian VPS:
@@ -171,6 +171,16 @@ Run a command-line benchmark:
 ```bash
 BASE_URL=http://127.0.0.1:3000 \
   PROXY_API_KEY=replace-with-a-long-random-secret \
+  bash scripts/tts-benchmark.sh
+```
+
+Benchmark a specific KittenTTS size:
+
+```bash
+BASE_URL=http://127.0.0.1:3000 \
+  PROXY_API_KEY=replace-with-a-long-random-secret \
+  KITTENTTS_MODEL=KittenML/kitten-tts-mini-0.8 \
+  PROVIDERS=kittentts \
   bash scripts/tts-benchmark.sh
 ```
 
@@ -308,6 +318,7 @@ BASE_URL=http://your-server:3000 \
 | `KITTENTTS_API_BASE` | none | Optional OpenAI-compatible KittenTTS HTTP endpoint. If set, the proxy uses HTTP instead of local command mode. |
 | `KITTENTTS_API_KEY` | none | Optional bearer token for the KittenTTS HTTP endpoint. |
 | `KITTENTTS_MODEL` | `KittenML/kitten-tts-nano-0.8` | KittenTTS model name or path. |
+| `KITTENTTS_MODELS` | mini/micro/nano/nano-int8 presets | Comma-separated KittenTTS model presets shown on the TTS benchmark page. |
 | `KITTENTTS_DEFAULT_VOICE` | `Jasper` | Default KittenTTS voice. The upstream examples include voices such as Bella, Liam, and Jasper. |
 | `KITTENTTS_COMMAND` | none | Local command template. The VPS installer sets this to the Python wrapper. Supports `{model}`, `{voice}`, `{speed}`, `{format}`, and `{output}` tokens. Text is passed on stdin. |
 | `KITTENTTS_OUTPUT_FORMAT` | `wav` | Expected output format for local KittenTTS command mode. |

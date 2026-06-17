@@ -22,6 +22,7 @@ const KOKORO_DEFAULT_VOICE = process.env.KOKORO_DEFAULT_VOICE || 'af_heart';
 const KITTENTTS_API_BASE = trimTrailingSlash(process.env.KITTENTTS_API_BASE || '');
 const KITTENTTS_API_KEY = process.env.KITTENTTS_API_KEY;
 const KITTENTTS_MODEL = process.env.KITTENTTS_MODEL || 'KittenML/kitten-tts-nano-0.8';
+const KITTENTTS_MODELS = parseCsv(process.env.KITTENTTS_MODELS || 'KittenML/kitten-tts-mini-0.8,KittenML/kitten-tts-micro-0.8,KittenML/kitten-tts-nano-0.8,KittenML/kitten-tts-nano-0.8-int8');
 const KITTENTTS_DEFAULT_VOICE = process.env.KITTENTTS_DEFAULT_VOICE || 'Jasper';
 const KITTENTTS_COMMAND = process.env.KITTENTTS_COMMAND || '';
 const KITTENTTS_OUTPUT_FORMAT = process.env.KITTENTTS_OUTPUT_FORMAT || 'wav';
@@ -359,6 +360,8 @@ app.post('/api/tts/benchmark', asyncHandler(async (req, res) => {
   const voice = req.body.voice;
   const responseFormat = req.body.response_format || 'mp3';
   const speed = req.body.speed;
+  const modelsByProvider = req.body.models && typeof req.body.models === 'object' ? req.body.models : {};
+  const requestedModel = req.body.model;
   const results = [];
 
   for (const provider of providers) {
@@ -368,6 +371,7 @@ app.post('/api/tts/benchmark', asyncHandler(async (req, res) => {
         provider,
         input,
         voice,
+        model: modelsByProvider[provider] || requestedModel,
         response_format: provider === 'piper' ? 'wav' : responseFormat,
         speed,
       });
@@ -786,6 +790,8 @@ async function getTtsProviders() {
       api_base: KITTENTTS_API_BASE || null,
       command_configured: Boolean(KITTENTTS_COMMAND),
       default_voice: KITTENTTS_DEFAULT_VOICE,
+      default_model: KITTENTTS_MODEL,
+      models: KITTENTTS_MODELS,
       output_formats: KITTENTTS_API_BASE ? ['mp3', 'wav', 'opus', 'flac', 'aac', 'pcm'] : [KITTENTTS_OUTPUT_FORMAT],
     },
     {
@@ -856,9 +862,10 @@ async function synthesizeSpeech(body) {
 async function synthesizeWithKittenTts(body, input) {
   if (KITTENTTS_API_BASE) {
     const responseFormat = String(body.response_format || 'mp3').toLowerCase();
+    const modelName = getTtsModelName(body.model, KITTENTTS_MODEL);
     const response = await axios.post(`${KITTENTTS_API_BASE}/audio/speech`, {
       model: body.model && !String(body.model).startsWith('tts:')
-        ? body.model
+        ? modelName
         : KITTENTTS_MODEL,
       input,
       voice: body.voice || KITTENTTS_DEFAULT_VOICE,
@@ -894,7 +901,7 @@ async function synthesizeWithKittenTts(body, input) {
   const responseFormat = String(body.response_format || KITTENTTS_OUTPUT_FORMAT).toLowerCase();
   const outputFile = path.join(TTS_OUTPUT_DIR, `kittentts-${Date.now()}-${Math.random().toString(16).slice(2)}.${responseFormat}`);
   const command = renderCommandTemplate(KITTENTTS_COMMAND, {
-    model: KITTENTTS_MODEL,
+    model: getTtsModelName(body.model, KITTENTTS_MODEL),
     output: outputFile,
     voice: body.voice || KITTENTTS_DEFAULT_VOICE,
     format: responseFormat,
@@ -1057,6 +1064,14 @@ function normalizeTtsProvider(value) {
   }
   if (normalized.includes('kokoro')) {
     return 'kokoro';
+  }
+  return normalized;
+}
+
+function getTtsModelName(value, fallback) {
+  const normalized = String(value || '').trim();
+  if (!normalized || normalized.startsWith('tts:')) {
+    return fallback;
   }
   return normalized;
 }

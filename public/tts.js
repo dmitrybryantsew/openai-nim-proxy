@@ -1,5 +1,6 @@
 const state = {
   apiKey: localStorage.getItem('openai-nim-proxy-key') || '',
+  providers: [],
   busy: false,
 };
 
@@ -8,6 +9,8 @@ const elements = {
   apiKeyInput: document.getElementById('apiKeyInput'),
   saveKeyButton: document.getElementById('saveKeyButton'),
   providerSelect: document.getElementById('providerSelect'),
+  modelInput: document.getElementById('modelInput'),
+  modelPresets: document.getElementById('modelPresets'),
   voiceInput: document.getElementById('voiceInput'),
   formatSelect: document.getElementById('formatSelect'),
   speedInput: document.getElementById('speedInput'),
@@ -24,6 +27,7 @@ elements.saveKeyButton.addEventListener('click', () => {
   localStorage.setItem('openai-nim-proxy-key', state.apiKey);
   loadProviders();
 });
+elements.providerSelect.addEventListener('change', renderModelPresets);
 elements.form.addEventListener('submit', runBenchmark);
 
 if (state.apiKey) {
@@ -63,7 +67,9 @@ async function loadProviders() {
   setStatus('Checking TTS providers...');
   try {
     const data = await api('/api/tts/providers');
+    state.providers = data.data || [];
     renderProviders(data.data || []);
+    renderModelPresets();
     setStatus('Provider status loaded.');
   } catch (error) {
     setStatus(`Provider check failed: ${error.message}`);
@@ -89,6 +95,11 @@ async function runBenchmark(event) {
   const providers = selectedProvider === 'all'
     ? ['kokoro', 'kittentts', 'piper']
     : [selectedProvider];
+  const model = elements.modelInput.value.trim();
+  const models = {};
+  if (model && selectedProvider === 'all') {
+    models.kittentts = model;
+  }
 
   try {
     const data = await api('/api/tts/benchmark', {
@@ -97,6 +108,8 @@ async function runBenchmark(event) {
         providers,
         input: elements.textInput.value,
         voice: elements.voiceInput.value.trim() || undefined,
+        model: selectedProvider === 'all' ? undefined : model || undefined,
+        models,
         response_format: elements.formatSelect.value,
         speed: Number(elements.speedInput.value) || 1,
       }),
@@ -109,6 +122,22 @@ async function runBenchmark(event) {
     state.busy = false;
     elements.runButton.disabled = false;
   }
+}
+
+function renderModelPresets() {
+  const selectedProvider = elements.providerSelect.value;
+  const provider = (state.providers || []).find((item) => item.id === selectedProvider)
+    || (state.providers || []).find((item) => item.id === 'kittentts');
+  const models = provider?.models || [];
+
+  elements.modelPresets.innerHTML = '';
+  for (const model of models) {
+    const option = document.createElement('option');
+    option.value = model;
+    elements.modelPresets.appendChild(option);
+  }
+
+  elements.modelInput.placeholder = provider?.default_model || 'Provider default';
 }
 
 function renderProviders(providers) {

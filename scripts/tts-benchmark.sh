@@ -4,6 +4,7 @@ set -euo pipefail
 BASE_URL="${BASE_URL:-http://127.0.0.1:3000}"
 PROXY_API_KEY="${PROXY_API_KEY:-}"
 PROVIDERS="${PROVIDERS:-kokoro,kittentts,piper}"
+KITTENTTS_MODEL="${KITTENTTS_MODEL:-KittenML/kitten-tts-nano-0.8}"
 TEXT="${TEXT:-This is a text to speech benchmark for Kokoro, KittenTTS, and Piper running behind the OpenAI-compatible proxy.}"
 
 if [[ -z "$PROXY_API_KEY" ]]; then
@@ -16,4 +17,4 @@ json_providers="$(printf '%s' "$PROVIDERS" | awk -F, '{ printf "["; for (i=1; i<
 curl -fsS "${BASE_URL}/api/tts/benchmark" \
   -H "Authorization: Bearer ${PROXY_API_KEY}" \
   -H "Content-Type: application/json" \
-  -d "{\"providers\":${json_providers},\"input\":$(TEXT="$TEXT" node -e "process.stdout.write(JSON.stringify(process.env.TEXT || ''))"),\"response_format\":\"mp3\",\"speed\":1}"
+  -d "{\"providers\":${json_providers},\"models\":{\"kittentts\":$(KITTENTTS_MODEL="$KITTENTTS_MODEL" node -e "process.stdout.write(JSON.stringify(process.env.KITTENTTS_MODEL || ''))")},\"input\":$(TEXT="$TEXT" node -e "process.stdout.write(JSON.stringify(process.env.TEXT || ''))"),\"response_format\":\"mp3\",\"speed\":1}"
