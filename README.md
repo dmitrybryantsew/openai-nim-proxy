@@ -247,7 +247,7 @@ BASE_URL=http://your-server:3000 \
 | `OPENROUTER_APP_TITLE` | `openai-nim-proxy` | Sent as `X-Title` to OpenRouter. |
 | `OPENROUTER_APP_URL` | none | Sent as `HTTP-Referer` to OpenRouter. |
 | `DEFAULT_MAX_TOKENS` | `4096` | Used when the client omits `max_tokens`. |
-| `REQUEST_TIMEOUT_MS` | `120000` | Upstream request timeout. |
+| `REQUEST_TIMEOUT_MS` | `1200000` | Upstream request timeout. Raise this for long summaries or slow multimodal models. |
 | `MODEL_TEST_TIMEOUT_MS` | `30000` | Timeout for `/admin/models/test`. |
 | `MODEL_CACHE_TTL_MS` | `300000` | Cache duration for provider model lists. |
 | `MODEL_CACHE_FILE` | `data/models-cache.json` | Persistent model registry cache. |

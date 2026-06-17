@@ -8,7 +8,7 @@ const { ChatStore } = require('./src/chat-store');
 const app = express();
 
 const PORT = Number(process.env.PORT || 3000);
-const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS || 120000);
+const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS || 1200000);
 const MODEL_CACHE_TTL_MS = Number(process.env.MODEL_CACHE_TTL_MS || 300000);
 const MODEL_CACHE_FILE = process.env.MODEL_CACHE_FILE || path.join(__dirname, 'data', 'models-cache.json');
 const CHAT_DB_FILE = process.env.CHAT_DB_FILE || path.join(__dirname, 'data', 'chats.sqlite');
