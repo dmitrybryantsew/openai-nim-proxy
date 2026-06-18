@@ -159,6 +159,16 @@ function renderStatus(status) {
   serverUrl.textContent = `Web UI: ${status.web_public_url || status.web_url || 'not configured'}`;
   card.appendChild(serverUrl);
 
+  if (state.apiKey) {
+    const proxiedLink = document.createElement('a');
+    proxiedLink.className = 'nav-link';
+    proxiedLink.href = `/g4f-site/?key=${encodeURIComponent(state.apiKey)}`;
+    proxiedLink.target = '_blank';
+    proxiedLink.rel = 'noreferrer';
+    proxiedLink.textContent = 'Open proxied G4F site';
+    card.appendChild(proxiedLink);
+  }
+
   if (status.web_public_url) {
     const link = document.createElement('a');
     link.className = 'nav-link';

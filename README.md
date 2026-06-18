@@ -188,6 +188,7 @@ The proxy can route chat and image calls to a local GPT4Free sidecar without cop
 - `/api/g4f/chat` sends a small non-streaming chat request to the sidecar.
 - `/api/g4f/images` and `/v1/images/generations` forward image generation requests to `{G4F_API_BASE}/images/generations`.
 - `/g4f.html` provides a browser page for status, chat tests, image tests, and an optional link to the upstream GPT4Free web UI.
+- `/g4f-site/` proxies the upstream GPT4Free web UI through this service. Open it from `/g4f.html`; the page sets a same-site cookie from your proxy key so normal browser navigation works.
 
 Install on a VPS as a sidecar:
 

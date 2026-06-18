@@ -104,6 +104,8 @@ app.use(express.static(path.join(__dirname, 'public'), {
   index: 'index.html',
 }));
 
+app.use('/g4f-site', g4fSiteAuth, asyncHandler(proxyG4fSite));
+
 app.use((req, res, next) => {
   if (req.path === '/health') {
     return next();
@@ -873,6 +875,142 @@ function getProviderConfig(provider) {
   }
 
   return config;
+}
+
+function g4fSiteAuth(req, res, next) {
+  if (!PROXY_API_KEY) {
+    return res.status(500).send('PROXY_API_KEY is required');
+  }
+
+  const queryKey = String(req.query.key || '').trim();
+  const cookieKey = parseCookies(req.headers.cookie || '').g4f_site_key || '';
+
+  if (queryKey === PROXY_API_KEY) {
+    res.cookie('g4f_site_key', PROXY_API_KEY, {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: req.secure || req.headers['x-forwarded-proto'] === 'https',
+      maxAge: 12 * 60 * 60 * 1000,
+    });
+    return res.redirect(302, '/g4f-site/');
+  }
+
+  if (cookieKey === PROXY_API_KEY) {
+    return next();
+  }
+
+  return res.status(401).send('Open /g4f.html, save the proxy key, then use the G4F site link.');
+}
+
+async function proxyG4fSite(req, res) {
+  if (!providers.g4f.enabled) {
+    return res.status(503).send('G4F sidecar is disabled. Set G4F_ENABLED=true.');
+  }
+
+  const upstreamPath = req.originalUrl
+    .replace(/^\/g4f-site/, '')
+    .replace(/[?&]key=[^&]*/g, '') || '/';
+  const targetUrl = `${providers.g4f.webUrl}${upstreamPath.startsWith('/') ? upstreamPath : `/${upstreamPath}`}`;
+  const headers = buildProxyHeaders(req.headers);
+  const response = await axios.request({
+    method: req.method,
+    url: targetUrl,
+    headers,
+    data: ['GET', 'HEAD'].includes(req.method) ? undefined : req.body,
+    responseType: 'arraybuffer',
+    timeout: REQUEST_TIMEOUT_MS,
+    validateStatus: () => true,
+  });
+
+  const contentType = response.headers['content-type'] || 'application/octet-stream';
+  res.status(response.status);
+  copyProxyHeaders(response.headers, res);
+
+  if (contentType.includes('text/html')) {
+    res.setHeader('Content-Type', contentType);
+    res.send(rewriteG4fHtml(Buffer.from(response.data).toString('utf8')));
+    return;
+  }
+
+  res.setHeader('Content-Type', contentType);
+  res.send(Buffer.from(response.data));
+}
+
+function buildProxyHeaders(headers) {
+  const blocked = new Set([
+    'host',
+    'connection',
+    'content-length',
+    'authorization',
+    'accept-encoding',
+  ]);
+  const proxied = {};
+
+  for (const [key, value] of Object.entries(headers || {})) {
+    if (!blocked.has(key.toLowerCase())) {
+      proxied[key] = value;
+    }
+  }
+
+  if (proxied.cookie) {
+    const cookie = String(proxied.cookie)
+      .split(';')
+      .map((part) => part.trim())
+      .filter((part) => part && !part.startsWith('g4f_site_key='))
+      .join('; ');
+
+    if (cookie) {
+      proxied.cookie = cookie;
+    } else {
+      delete proxied.cookie;
+    }
+  }
+
+  return proxied;
+}
+
+function copyProxyHeaders(headers, res) {
+  const blocked = new Set([
+    'connection',
+    'content-length',
+    'content-encoding',
+    'transfer-encoding',
+  ]);
+
+  for (const [key, value] of Object.entries(headers || {})) {
+    const lower = key.toLowerCase();
+    if (blocked.has(lower)) {
+      continue;
+    }
+
+    if (lower === 'set-cookie') {
+      const cookies = Array.isArray(value) ? value : [value];
+      res.setHeader('Set-Cookie', cookies.map((cookie) => String(cookie).replace(/;\s*Path=\/(;|$)/i, '; Path=/g4f-site$1')));
+      continue;
+    }
+
+    res.setHeader(key, value);
+  }
+}
+
+function rewriteG4fHtml(html) {
+  return String(html)
+    .replace(/(href|src|action)=["']\/(?!\/)/g, '$1="/g4f-site/')
+    .replace(/url\(["']?\/(?!\/)/g, 'url("/g4f-site/');
+}
+
+function parseCookies(cookieHeader) {
+  return String(cookieHeader || '')
+    .split(';')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .reduce((cookies, part) => {
+      const index = part.indexOf('=');
+      if (index > 0) {
+        cookies[decodeURIComponent(part.slice(0, index))] = decodeURIComponent(part.slice(index + 1));
+      }
+      return cookies;
+    }, {});
 }
 
 async function getG4fStatus() {
