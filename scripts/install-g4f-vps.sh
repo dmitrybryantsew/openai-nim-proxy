@@ -27,6 +27,8 @@ fi
 docker pull "$G4F_IMAGE"
 
 mkdir -p /opt/g4f/har_and_cookies
+# The upstream image may run as a non-root user and needs to create keys/cookies here.
+chmod 0777 /opt/g4f /opt/g4f/har_and_cookies
 
 cat > /etc/systemd/system/g4f-sidecar.service <<UNIT
 [Unit]
