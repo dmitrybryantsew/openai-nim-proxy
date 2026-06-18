@@ -2,6 +2,8 @@
 
 OpenAI-compatible proxy for NVIDIA NIM, Chutes, Ollama, GPT4Free sidecar, and OpenRouter models.
 
+The project started as a NVIDIA NIM proxy, but it now behaves more like an OpenAI-compatible LLM gateway. A future repo/service rename to `openai-llm-gateway` would better describe the current scope without changing the API contract.
+
 The proxy keeps OpenAI-style endpoints, but it does not fake OpenAI model aliases. It exposes real provider models with explicit IDs:
 
 - `nim:<nvidia-model-id>`
@@ -216,9 +218,14 @@ sudo G4F_BIND=0.0.0.0 G4F_PUBLIC_HOST=your-domain.example bash scripts/install-g
 On a small VPS, keep this optional. If memory or swap pressure returns, disable it:
 
 ```bash
-systemctl disable --now g4f-sidecar
-sed -i 's/^G4F_ENABLED=.*/G4F_ENABLED=false/' /opt/openai-nim-proxy/.env
-systemctl restart openai-nim-proxy
+cd /opt/openai-nim-proxy
+sudo bash scripts/cleanup-g4f-vps.sh
+```
+
+To remove the sidecar data directory too:
+
+```bash
+sudo REMOVE_G4F_DATA=true bash scripts/cleanup-g4f-vps.sh
 ```
 
 ## Text To Speech Probe
