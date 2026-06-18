@@ -54,7 +54,7 @@ const providers = {
     enabled: parseBoolean(process.env.OLLAMA_ENABLED, true),
   },
   g4f: {
-    apiBase: trimTrailingSlash(process.env.G4F_API_BASE || 'http://127.0.0.1:1337/v1'),
+    apiBase: trimTrailingSlash(process.env.G4F_API_BASE || 'http://127.0.0.1:8080/v1'),
     apiKey: process.env.G4F_API_KEY,
     enabled: parseBoolean(process.env.G4F_ENABLED, false),
     webUrl: trimTrailingSlash(process.env.G4F_WEB_URL || 'http://127.0.0.1:8080'),

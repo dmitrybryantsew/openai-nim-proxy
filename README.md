@@ -132,7 +132,7 @@ GPT4Free is optional and intentionally runs as a separate sidecar. It is useful 
 
 ```bash
 G4F_ENABLED=true
-G4F_API_BASE=http://127.0.0.1:1337/v1
+G4F_API_BASE=http://127.0.0.1:8080/v1
 G4F_WEB_URL=http://127.0.0.1:8080
 G4F_MODELS=gpt-4o-mini,gpt-4o,gpt-3.5-turbo
 ```
@@ -202,7 +202,7 @@ Useful install variables:
 
 ```bash
 G4F_IMAGE=hlohaus789/g4f:latest
-G4F_API_PORT=1337
+G4F_API_PORT=8080
 G4F_WEB_PORT=8080
 G4F_BIND=127.0.0.1
 G4F_MODELS=gpt-4o-mini,gpt-4o,gpt-3.5-turbo
@@ -420,7 +420,7 @@ BASE_URL=http://your-server:3000 \
 | `OLLAMA_API_BASE` | `http://127.0.0.1:11434/v1` | Ollama OpenAI-compatible endpoint. |
 | `OLLAMA_API_KEY` | none | Optional bearer token if Ollama is behind an authenticating proxy. |
 | `G4F_ENABLED` | `false` | Enables the optional GPT4Free sidecar provider. |
-| `G4F_API_BASE` | `http://127.0.0.1:1337/v1` | GPT4Free OpenAI-compatible sidecar endpoint. |
+| `G4F_API_BASE` | `http://127.0.0.1:8080/v1` | GPT4Free OpenAI-compatible sidecar endpoint. |
 | `G4F_API_KEY` | none | Optional bearer token if the sidecar is protected. |
 | `G4F_WEB_URL` | `http://127.0.0.1:8080` | Server-side upstream GPT4Free web UI URL. |
 | `G4F_WEB_PUBLIC_URL` | none | Browser-accessible GPT4Free web UI URL shown on `/g4f.html`. |

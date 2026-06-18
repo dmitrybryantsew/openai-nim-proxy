@@ -4,7 +4,7 @@ set -euo pipefail
 APP_NAME="${APP_NAME:-openai-nim-proxy}"
 APP_DIR="${APP_DIR:-/opt/openai-nim-proxy}"
 G4F_IMAGE="${G4F_IMAGE:-hlohaus789/g4f:latest}"
-G4F_API_PORT="${G4F_API_PORT:-1337}"
+G4F_API_PORT="${G4F_API_PORT:-8080}"
 G4F_WEB_PORT="${G4F_WEB_PORT:-8080}"
 G4F_BIND="${G4F_BIND:-127.0.0.1}"
 G4F_PUBLIC_HOST="${G4F_PUBLIC_HOST:-}"
@@ -42,7 +42,7 @@ Type=simple
 Restart=always
 RestartSec=10
 ExecStartPre=-/usr/bin/docker rm -f g4f-sidecar
-ExecStart=/usr/bin/docker run --rm --name g4f-sidecar ${G4F_DOCKER_ARGS} -p ${G4F_BIND}:${G4F_API_PORT}:1337 -p ${G4F_BIND}:${G4F_WEB_PORT}:8080 -v /opt/g4f/har_and_cookies:/app/har_and_cookies ${G4F_IMAGE}
+ExecStart=/usr/bin/docker run --rm --name g4f-sidecar ${G4F_DOCKER_ARGS} -p ${G4F_BIND}:${G4F_API_PORT}:8080 -v /opt/g4f/har_and_cookies:/app/har_and_cookies ${G4F_IMAGE}
 ExecStop=/usr/bin/docker stop g4f-sidecar
 
 [Install]
