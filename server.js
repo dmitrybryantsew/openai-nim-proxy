@@ -38,6 +38,10 @@ const ENABLE_THINKING_MODE = parseBoolean(process.env.ENABLE_THINKING_MODE, fals
 const THINKING_MODELS = parseCsv(process.env.THINKING_MODELS || 'nim:nvidia/nemotron-3-nano-omni-30b-a3b-reasoning,nvidia/nemotron-3-nano-omni-30b-a3b-reasoning');
 const NIM_FEATURED_MODELS = parseCsv(process.env.NIM_FEATURED_MODELS || 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning');
 const G4F_MODELS = parseCsv(process.env.G4F_MODELS || 'gpt-4o-mini,gpt-4o,gpt-3.5-turbo');
+const G4F_MODEL_ALLOWLIST = parseCsv(process.env.G4F_MODEL_ALLOWLIST || '');
+const G4F_PROBE_ENABLED = parseBoolean(process.env.G4F_PROBE_ENABLED, false);
+const G4F_PROBE_TIMEOUT_MS = Number(process.env.G4F_PROBE_TIMEOUT_MS || 8000);
+const HIDDEN_PROVIDERS = parseCsv(process.env.HIDDEN_PROVIDERS || '');
 
 const providers = {
   nim: {
@@ -86,6 +90,9 @@ const registry = createModelRegistry({
   g4fApiKey: providers.g4f.apiKey,
   g4fEnabled: providers.g4f.enabled,
   g4fModels: G4F_MODELS,
+  g4fModelAllowlist: G4F_MODEL_ALLOWLIST,
+  g4fProbeEnabled: G4F_PROBE_ENABLED,
+  g4fProbeTimeoutMs: G4F_PROBE_TIMEOUT_MS,
   openRouterApiBase: providers.openrouter.apiBase,
   openRouterApiKey: providers.openrouter.apiKey,
   openRouterIncludePaid: providers.openrouter.includePaid,
@@ -1516,8 +1523,18 @@ function asyncHandler(handler) {
 }
 
 function filterModels(models, query = {}) {
+  const hiddenProviders = new Set([
+    ...HIDDEN_PROVIDERS,
+    ...parseCsv(query.exclude_provider || ''),
+  ]);
+  const requestedProviders = parseCsv(query.provider || '');
+
   return models.filter((model) => {
-    if (query.provider && model.provider !== query.provider) {
+    if (hiddenProviders.has(model.provider)) {
+      return false;
+    }
+
+    if (requestedProviders.length > 0 && !requestedProviders.includes(model.provider)) {
       return false;
     }
 
@@ -1535,6 +1552,14 @@ function filterModels(models, query = {}) {
 
     if (query.modality === 'multimodal') {
       return !isTextOnlyModel(model);
+    }
+
+    if (query.experimental === 'false' && model.experimental === true) {
+      return false;
+    }
+
+    if (query.healthy === 'true' && model.healthy === false) {
+      return false;
     }
 
     return true;

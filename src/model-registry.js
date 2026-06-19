@@ -19,6 +19,9 @@ function createModelRegistry(options) {
     g4fApiKey: options.g4fApiKey,
     g4fEnabled: options.g4fEnabled,
     g4fModels: options.g4fModels || [],
+    g4fModelAllowlist: options.g4fModelAllowlist || [],
+    g4fProbeEnabled: Boolean(options.g4fProbeEnabled),
+    g4fProbeTimeoutMs: Number(options.g4fProbeTimeoutMs) || 8000,
     openRouterApiBase: trimTrailingSlash(options.openRouterApiBase),
     openRouterApiKey: options.openRouterApiKey,
     openRouterIncludePaid: options.openRouterIncludePaid,
@@ -110,6 +113,21 @@ function createModelRegistry(options) {
   };
 }
 
+function normalizeModelCreated(value) {
+  const created = Number(value || 0);
+  if (!Number.isFinite(created) || created <= 0) {
+    return 0;
+  }
+
+  const earliestSaneModelTimestamp = Date.UTC(2018, 0, 1) / 1000;
+  const oneYearInSeconds = 365 * 24 * 60 * 60;
+  const latestSaneModelTimestamp = Math.floor(Date.now() / 1000) + oneYearInSeconds;
+  if (created < earliestSaneModelTimestamp || created > latestSaneModelTimestamp) {
+    return 0;
+  }
+
+  return created;
+}
 function buildFeaturedNimModels(modelIds) {
   return modelIds
     .filter(Boolean)
@@ -151,7 +169,7 @@ async function fetchNimModels(config) {
     .map((model) => ({
       id: `nim:${model.id}`,
       object: 'model',
-      created: Number(model.created || 0),
+      created: normalizeModelCreated(model.created),
       owned_by: 'nvidia',
       provider: 'nim',
       provider_model_id: model.id,
@@ -254,7 +272,7 @@ async function fetchG4fModels(config) {
     return buildConfiguredG4fModels(config);
   }
 
-  const models = (response.data?.data || [])
+  const fetched = (response.data?.data || [])
     .filter((model) => model?.id)
     .map((model) => buildG4fModel(model.id, {
       created: Number(model.created || 0),
@@ -263,7 +281,29 @@ async function fetchG4fModels(config) {
       source: 'g4f',
     }));
 
-  return models.length > 0 ? models : buildConfiguredG4fModels(config);
+  const filtered = applyG4fAllowlist(fetched, config);
+
+  if (filtered.length > 0) {
+    return filtered;
+  }
+
+  return buildConfiguredG4fModels(config);
+}
+
+function applyG4fAllowlist(models, config) {
+  // If an explicit allowlist is configured, intersect with it. Otherwise
+  // return the models unchanged (the caller falls back to the configured
+  // g4fModels list when the live fetch returns nothing usable).
+  if (!Array.isArray(config.g4fModelAllowlist) || config.g4fModelAllowlist.length === 0) {
+    return models;
+  }
+
+  const allowed = new Set(config.g4fModelAllowlist.map((id) => String(id).trim()).filter(Boolean));
+  if (allowed.size === 0) {
+    return models;
+  }
+
+  return models.filter((model) => allowed.has(model.provider_model_id));
 }
 
 function buildConfiguredG4fModels(config) {

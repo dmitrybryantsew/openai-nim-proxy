@@ -4,9 +4,36 @@ const state = {
   models: [],
   activeChatId: null,
   activeFilter: 'all',
+  hiddenProviders: loadHiddenProviders(),
   busy: false,
   requestSettings: loadRequestSettings(),
 };
+
+const PROVIDER_LABELS = {
+  nim: 'NIM',
+  chutes: 'Chutes',
+  ollama: 'Ollama',
+  openrouter: 'OpenRouter',
+  g4f: 'G4F',
+};
+
+function loadHiddenProviders() {
+  try {
+    const raw = localStorage.getItem('openai-nim-proxy-hidden-providers');
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    return new Set(Array.isArray(parsed) ? parsed.filter(Boolean) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveHiddenProviders() {
+  localStorage.setItem(
+    'openai-nim-proxy-hidden-providers',
+    JSON.stringify([...state.hiddenProviders]),
+  );
+}
 
 const elements = {
   apiKeyInput: document.getElementById('apiKeyInput'),
@@ -28,6 +55,7 @@ const elements = {
   messageInput: document.getElementById('messageInput'),
   sendButton: document.getElementById('sendButton'),
   filters: Array.from(document.querySelectorAll('.filter')),
+  providerChips: document.getElementById('providerChips'),
 };
 
 elements.apiKeyInput.value = state.apiKey;
@@ -265,6 +293,10 @@ async function sendMessage(event) {
 
 function renderModels() {
   const models = state.models.filter((model) => {
+    if (state.hiddenProviders.has(model.provider)) {
+      return false;
+    }
+
     if (state.activeFilter === 'text') {
       return isTextOnly(model);
     }
@@ -276,18 +308,69 @@ function renderModels() {
     return true;
   });
 
+  renderProviderChips();
+
   const current = elements.modelSelect.value;
   elements.modelSelect.innerHTML = '';
 
   for (const model of models) {
     const option = document.createElement('option');
     option.value = model.id;
-    option.textContent = `${model.id}${model.free ? ' free' : ''}`;
+    const tags = [];
+    if (model.experimental) tags.push('experimental');
+    if (model.healthy === false) tags.push('unhealthy');
+    const tagSuffix = tags.length ? ` [${tags.join(', ')}]` : '';
+    option.textContent = `${model.id}${model.free ? ' free' : ''}${tagSuffix}`;
     elements.modelSelect.appendChild(option);
   }
 
   if (models.some((model) => model.id === current)) {
     elements.modelSelect.value = current;
+  }
+}
+
+function renderProviderChips() {
+  if (!elements.providerChips) return;
+
+  const counts = new Map();
+  for (const model of state.models) {
+    counts.set(model.provider, (counts.get(model.provider) || 0) + 1);
+  }
+
+  const providers = [...counts.keys()].sort();
+  elements.providerChips.innerHTML = '';
+
+  if (providers.length === 0) {
+    elements.providerChips.style.display = 'none';
+    return;
+  }
+
+  elements.providerChips.style.display = '';
+
+  for (const provider of providers) {
+    const label = PROVIDER_LABELS[provider] || provider;
+    const count = counts.get(provider);
+    const hidden = state.hiddenProviders.has(provider);
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = `provider-chip${hidden ? ' off' : ''}`;
+    chip.dataset.provider = provider;
+    chip.title = hidden ? `Show ${label} models` : `Hide ${label} models`;
+    chip.textContent = hidden ? `${label} (${count})` : `${label} (${count})`;
+    if (hidden) {
+      chip.style.opacity = '0.45';
+      chip.style.textDecoration = 'line-through';
+    }
+    chip.addEventListener('click', () => {
+      if (state.hiddenProviders.has(provider)) {
+        state.hiddenProviders.delete(provider);
+      } else {
+        state.hiddenProviders.add(provider);
+      }
+      saveHiddenProviders();
+      renderModels();
+    });
+    elements.providerChips.appendChild(chip);
   }
 }
 

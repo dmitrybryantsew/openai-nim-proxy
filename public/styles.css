@@ -181,6 +181,38 @@ textarea:focus {
   grid-template-columns: repeat(3, 1fr);
 }
 
+.provider-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.provider-chip {
+  border: 1px solid var(--border);
+  background: #ffffff;
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, opacity 0.15s;
+}
+
+.provider-chip:hover {
+  background: #f1f5f9;
+  color: var(--text);
+}
+
+.provider-chip.off {
+  background: #fef2f2;
+  border-color: #fecaca;
+  color: #b91c1c;
+}
+
 .request-settings {
   border: 1px solid var(--border);
   border-radius: 6px;
