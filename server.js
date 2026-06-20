@@ -411,17 +411,12 @@ app.post('/v1/responses', async (req, res) => {
   try {
     const body = req.body || {};
 
-    // Reject built-in tools we don't support. Function tools are fine.
-    const unsupported = detectUnsupportedTools(body.tools);
-    if (unsupported.length > 0) {
-      return res.status(400).json({
-        error: {
-          message: `Built-in tools not supported by this proxy: ${unsupported.join(', ')}. Use function tools only.`,
-          type: 'invalid_request_error',
-          param: 'tools',
-          code: 'unsupported_tool',
-        },
-      });
+    // Strip built-in tools Codex always sends (web_search, file_search,
+    // code_interpreter, namespace, etc.). We don't support them, but
+    // rejecting the whole request would break Codex. Function tools are
+    // forwarded as-is.
+    if (Array.isArray(body.tools)) {
+      body.tools = body.tools.filter((t) => t && t.type === 'function');
     }
 
     const modelId = body.model;
