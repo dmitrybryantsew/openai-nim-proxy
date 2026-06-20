@@ -503,12 +503,13 @@ function pipeResponsesStream(upstreamResponse, res, req, publicModelId, requestB
       try {
         const parsed = JSON.parse(payload);
         const delta = parsed.choices?.[0]?.delta;
+        console.log('[responses-debug] chunk keys:', Object.keys(parsed), 'delta:', JSON.stringify(delta));
         if (delta) {
           const out = transformer.handleDelta(delta);
           if (out) res.write(out);
         }
-      } catch {
-        // Ignore malformed chunks; upstream can have keep-alive comments.
+      } catch (err) {
+        console.log('[responses-debug] parse error:', err.message, 'payload:', payload.slice(0, 100));
       }
     }
   });
