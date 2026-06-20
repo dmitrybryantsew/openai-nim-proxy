@@ -251,9 +251,11 @@ function createResponsesStreamTransformer(publicModelId, requestBody) {
           status: 'in_progress',
         };
         state.items.push(item);
+        item._index = state.outputIndex++;
+        const wireItem = stripInternal(item);
         chunks.push(emit('response.output_item.added', {
-          output_index: item._index = state.outputIndex++,
-          item,
+          output_index: item._index,
+          item: wireItem,
         }));
       }
       item.content[0].text += delta.reasoning_content;
@@ -278,9 +280,10 @@ function createResponsesStreamTransformer(publicModelId, requestBody) {
         };
         state.items.push(item);
         item._index = state.outputIndex++;
+        const wireItem = stripInternal(item);
         chunks.push(emit('response.output_item.added', {
           output_index: item._index,
-          item,
+          item: wireItem,
         }));
         chunks.push(emit('response.content_part.added', {
           item_id: item.id,
@@ -315,9 +318,10 @@ function createResponsesStreamTransformer(publicModelId, requestBody) {
           };
           state.items.push(item);
           item._index = state.outputIndex++;
+          const wireItem = stripInternal(item);
           chunks.push(emit('response.output_item.added', {
             output_index: item._index,
-            item,
+            item: wireItem,
           }));
         }
         if (tc.function?.name) item.name = tc.function.name;
@@ -333,6 +337,13 @@ function createResponsesStreamTransformer(publicModelId, requestBody) {
     }
 
     return chunks.join('');
+  }
+
+  function stripInternal(item) {
+    const wire = { ...item };
+    delete wire._kind;
+    delete wire._index;
+    return wire;
   }
 
   function finish() {

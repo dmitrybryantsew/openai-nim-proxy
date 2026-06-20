@@ -476,7 +476,6 @@ app.post('/v1/responses', async (req, res) => {
 });
 
 function pipeResponsesStream(upstreamResponse, res, req, publicModelId, requestBody) {
-  console.log('[responses-debug] pipeResponsesStream called, status:', upstreamResponse.status, 'isStream:', upstreamResponse.data?.readable);
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
@@ -490,7 +489,6 @@ function pipeResponsesStream(upstreamResponse, res, req, publicModelId, requestB
   res.write(transformer.initial);
 
   upstreamResponse.data.on('data', (chunk) => {
-    console.log('[responses-debug] data event, chunk size:', chunk.length, 'chunk:', JSON.stringify(chunk.toString('utf8').slice(0, 300)));
     buffer += chunk.toString('utf8');
     let idx;
     while ((idx = buffer.indexOf('\n\n')) !== -1) {
@@ -518,20 +516,17 @@ function pipeResponsesStream(upstreamResponse, res, req, publicModelId, requestB
       try {
         const parsed = JSON.parse(payload);
         const delta = parsed.choices?.[0]?.delta;
-        console.log('[responses-debug] parsed delta:', JSON.stringify(delta));
         if (delta) {
           const out = transformer.handleDelta(delta);
-          console.log('[responses-debug] handleDelta returned:', out.length, 'chars');
           if (out) res.write(out);
         }
-      } catch (err) {
-        console.log('[responses-debug] parse error:', err.message, 'payload:', payload.slice(0, 100));
+      } catch {
+        // Ignore malformed chunks; upstream can have keep-alive comments.
       }
     }
   });
 
   upstreamResponse.data.on('end', () => {
-    console.log('[responses-debug] end event, buffer:', JSON.stringify(buffer.slice(0, 200)));
     const tail = transformer.finish();
     if (tail) res.write(tail);
     res.end();
