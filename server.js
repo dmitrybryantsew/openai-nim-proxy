@@ -496,11 +496,24 @@ function pipeResponsesStream(upstreamResponse, res, req, publicModelId, requestB
     while ((idx = buffer.indexOf('\n\n')) !== -1) {
       const raw = buffer.slice(0, idx);
       buffer = buffer.slice(idx + 2);
-      const lineEnd = raw.indexOf('\n');
-      if (lineEnd === -1) continue;
-      const dataLine = raw.slice(lineEnd + 1).trim();
-      if (!dataLine.startsWith('data:')) continue;
-      const payload = dataLine.slice(5).trim();
+      // Find the data line. SSE messages can be:
+      //   "data: foo\n\n"
+      //   "event: foo\ndata: bar\n\n"
+      //   ":keepalive\n\n"
+      let payload = null;
+      const lines = raw.split('\n');
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith('data:')) {
+          payload = trimmed.slice(5).trim();
+          break;
+        }
+        if (trimmed.startsWith(':')) {
+          // SSE comment, ignore
+          continue;
+        }
+      }
+      if (payload === null) continue;
       if (payload === '[DONE]') continue;
       try {
         const parsed = JSON.parse(payload);
