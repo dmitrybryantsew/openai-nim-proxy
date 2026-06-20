@@ -485,32 +485,8 @@ function pipeResponsesStream(upstreamResponse, res, req, publicModelId, requestB
   let buffer = '';
 
   // Emit the initial response.created + response.in_progress events.
-  const createdAt = Math.floor(Date.now() / 1000);
-  const initialId = `resp_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-  res.write(`event: response.created\ndata: ${JSON.stringify({
-    response: {
-      id: initialId,
-      object: 'response',
-      created_at: createdAt,
-      status: 'in_progress',
-      model: publicModelId,
-      output: [],
-      output_text: '',
-      usage: null,
-    },
-  })}\n\n`);
-  res.write(`event: response.in_progress\ndata: ${JSON.stringify({
-    response: {
-      id: initialId,
-      object: 'response',
-      created_at: createdAt,
-      status: 'in_progress',
-      model: publicModelId,
-      output: [],
-      output_text: '',
-      usage: null,
-    },
-  })}\n\n`);
+  // These MUST use the same responseId as everything that follows.
+  res.write(transformer.initial);
 
   upstreamResponse.data.on('data', (chunk) => {
     buffer += chunk.toString('utf8');
