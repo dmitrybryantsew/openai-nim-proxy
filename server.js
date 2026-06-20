@@ -446,7 +446,7 @@ app.post('/v1/responses', async (req, res) => {
     }
 
     if (stream) {
-      pipeResponsesStream(upstreamResponse, res, model.id, body);
+      pipeResponsesStream(upstreamResponse, res, req, model.id, body);
       return;
     }
     const responsesObj = chatCompletionsToResponse(upstreamResponse.data, model.id, body);
@@ -475,7 +475,7 @@ app.post('/v1/responses', async (req, res) => {
   }
 });
 
-function pipeResponsesStream(upstreamResponse, res, publicModelId, requestBody) {
+function pipeResponsesStream(upstreamResponse, res, req, publicModelId, requestBody) {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
