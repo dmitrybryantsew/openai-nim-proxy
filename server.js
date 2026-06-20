@@ -6,6 +6,45 @@ const cors = require('cors');
 const axios = require('axios');
 const { buildOpenRouterHeaders, buildOptionalBearerHeaders, createModelRegistry } = require('./src/model-registry');
 const { ChatStore } = require('./src/chat-store');
+const {
+  responsesToChatCompletions,
+  chatCompletionsToResponse,
+  createResponsesStreamTransformer,
+  detectUnsupportedTools,
+} = require('./src/responses');
+
+// In-memory store for previous_response_id -> input history. Codex uses this
+// for multi-turn conversation continuity. Keyed by response id, value is the
+// full input array (which already contains the prior turn's tool results).
+const RESPONSE_STATE_TTL_MS = Number(process.env.RESPONSE_STATE_TTL_MS || 60 * 60 * 1000);
+const responseState = new Map(); // id -> { input, created_at }
+const RESPONSE_STATE_MAX = Number(process.env.RESPONSE_STATE_MAX || 1000);
+
+function storeResponseState(id, input) {
+  if (responseState.size >= RESPONSE_STATE_MAX) {
+    // Drop oldest.
+    const firstKey = responseState.keys().next().value;
+    if (firstKey) responseState.delete(firstKey);
+  }
+  responseState.set(id, { input, created_at: Date.now() });
+}
+
+function getResponseState(id) {
+  const entry = responseState.get(id);
+  if (!entry) return null;
+  if (Date.now() - entry.created_at > RESPONSE_STATE_TTL_MS) {
+    responseState.delete(id);
+    return null;
+  }
+  return entry;
+}
+
+setInterval(() => {
+  const cutoff = Date.now() - RESPONSE_STATE_TTL_MS;
+  for (const [id, entry] of responseState.entries()) {
+    if (entry.created_at < cutoff) responseState.delete(id);
+  }
+}, Math.min(RESPONSE_STATE_TTL_MS, 5 * 60 * 1000)).unref();
 
 const app = express();
 
@@ -365,6 +404,149 @@ app.post('/v1/chat/completions', async (req, res) => {
     res.status(status).json(openAiError(message, status >= 500 ? 'server_error' : 'invalid_request_error', status));
   }
 });
+
+// OpenAI Responses API. Codex CLI 0.136+ requires this endpoint; upstreams
+// only speak chat-completions, so we translate.
+app.post('/v1/responses', async (req, res) => {
+  try {
+    const body = req.body || {};
+
+    // Reject built-in tools we don't support. Function tools are fine.
+    const unsupported = detectUnsupportedTools(body.tools);
+    if (unsupported.length > 0) {
+      return res.status(400).json({
+        error: {
+          message: `Built-in tools not supported by this proxy: ${unsupported.join(', ')}. Use function tools only.`,
+          type: 'invalid_request_error',
+          param: 'tools',
+          code: 'unsupported_tool',
+        },
+      });
+    }
+
+    const modelId = body.model;
+    if (!modelId) {
+      return res.status(400).json(openAiError('model is required', 'invalid_request_error', 400));
+    }
+    const resolvedModel = await registry.resolveModel(modelId);
+
+    // Stitch prior turn from previous_response_id if present.
+    let input = body.input;
+    if (body.previous_response_id) {
+      const prior = getResponseState(body.previous_response_id);
+      if (prior && Array.isArray(prior.input)) {
+        input = Array.isArray(input) ? [...prior.input, ...input] : prior.input;
+      }
+    }
+
+    const chatBody = responsesToChatCompletions({ ...body, input }, resolvedModel);
+    const stream = Boolean(body.stream);
+
+    // Reuse the existing chat-completions forwarder so thinking mode, defaults,
+    // and provider headers stay consistent with /v1/chat/completions.
+    const { response: upstreamResponse, model } = await requestChatCompletion(chatBody, stream, resolvedModel);
+
+    if (upstreamResponse.status < 200 || upstreamResponse.status >= 300) {
+      return sendUpstreamError(res, upstreamResponse);
+    }
+
+    if (stream) {
+      pipeResponsesStream(upstreamResponse, res, model.id, body);
+      return;
+    }
+
+    const responsesObj = chatCompletionsToResponse(upstreamResponse.data, model.id, body);
+    // Persist for multi-turn continuity.
+    if (Array.isArray(input)) {
+      // Append the assistant output to the input so the next call has full history.
+      const nextInput = [...input, ...responsesObj.output];
+      storeResponseState(responsesObj.id, nextInput);
+    }
+    res.json(responsesObj);
+  } catch (error) {
+    const status = error.response?.status || error.status || 500;
+    const message = error.response?.data?.error?.message || error.message || 'Internal server error';
+    res.status(status).json(openAiError(message, status >= 500 ? 'server_error' : 'invalid_request_error', status));
+  }
+});
+
+function pipeResponsesStream(upstreamResponse, res, publicModelId, requestBody) {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+
+  const transformer = createResponsesStreamTransformer(publicModelId, requestBody);
+  let buffer = '';
+
+  // Emit the initial response.created + response.in_progress events.
+  const createdAt = Math.floor(Date.now() / 1000);
+  const initialId = `resp_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  res.write(`event: response.created\ndata: ${JSON.stringify({
+    response: {
+      id: initialId,
+      object: 'response',
+      created_at: createdAt,
+      status: 'in_progress',
+      model: publicModelId,
+      output: [],
+      output_text: '',
+      usage: null,
+    },
+  })}\n\n`);
+  res.write(`event: response.in_progress\ndata: ${JSON.stringify({
+    response: {
+      id: initialId,
+      object: 'response',
+      created_at: createdAt,
+      status: 'in_progress',
+      model: publicModelId,
+      output: [],
+      output_text: '',
+      usage: null,
+    },
+  })}\n\n`);
+
+  upstreamResponse.data.on('data', (chunk) => {
+    buffer += chunk.toString('utf8');
+    let idx;
+    while ((idx = buffer.indexOf('\n\n')) !== -1) {
+      const raw = buffer.slice(0, idx);
+      buffer = buffer.slice(idx + 2);
+      const lineEnd = raw.indexOf('\n');
+      if (lineEnd === -1) continue;
+      const dataLine = raw.slice(lineEnd + 1).trim();
+      if (!dataLine.startsWith('data:')) continue;
+      const payload = dataLine.slice(5).trim();
+      if (payload === '[DONE]') continue;
+      try {
+        const parsed = JSON.parse(payload);
+        const delta = parsed.choices?.[0]?.delta;
+        if (delta) {
+          const out = transformer.handleDelta(delta);
+          if (out) res.write(out);
+        }
+      } catch {
+        // Ignore malformed chunks; upstream can have keep-alive comments.
+      }
+    }
+  });
+
+  upstreamResponse.data.on('end', () => {
+    const tail = transformer.finish();
+    if (tail) res.write(tail);
+    res.end();
+  });
+
+  upstreamResponse.data.on('error', (err) => {
+    res.write(`event: error\ndata: ${JSON.stringify({ error: { message: err.message, type: 'upstream_error' } })}\n\n`);
+    res.end();
+  });
+
+  req.on('close', () => {
+    upstreamResponse.data.destroy?.();
+  });
+}
 
 app.get('/api/g4f/status', asyncHandler(async (_req, res) => {
   const status = await getG4fStatus();
