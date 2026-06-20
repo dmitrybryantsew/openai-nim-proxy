@@ -490,7 +490,7 @@ function pipeResponsesStream(upstreamResponse, res, req, publicModelId, requestB
   res.write(transformer.initial);
 
   upstreamResponse.data.on('data', (chunk) => {
-    console.log('[responses-debug] data event, chunk size:', chunk.length);
+    console.log('[responses-debug] data event, chunk size:', chunk.length, 'chunk:', JSON.stringify(chunk.toString('utf8').slice(0, 300)));
     buffer += chunk.toString('utf8');
     let idx;
     while ((idx = buffer.indexOf('\n\n')) !== -1) {
