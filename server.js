@@ -461,6 +461,17 @@ app.post('/v1/responses', async (req, res) => {
   } catch (error) {
     const status = error.response?.status || error.status || 500;
     const message = error.response?.data?.error?.message || error.message || 'Internal server error';
+    if (res.headersSent) {
+      // Streaming already started; can't change status. Just end the stream
+      // with an error event so the client knows.
+      try {
+        res.write(`event: error\ndata: ${JSON.stringify({ error: { message, type: 'upstream_error' } })}\n\n`);
+        res.end();
+      } catch {
+        res.end();
+      }
+      return;
+    }
     res.status(status).json(openAiError(message, status >= 500 ? 'server_error' : 'invalid_request_error', status));
   }
 });
