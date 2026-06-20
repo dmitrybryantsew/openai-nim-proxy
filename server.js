@@ -505,9 +505,10 @@ function pipeResponsesStream(upstreamResponse, res, req, publicModelId, requestB
       try {
         const parsed = JSON.parse(payload);
         const delta = parsed.choices?.[0]?.delta;
-        console.log('[responses-debug] chunk keys:', Object.keys(parsed), 'delta:', JSON.stringify(delta));
+        console.log('[responses-debug] parsed delta:', JSON.stringify(delta));
         if (delta) {
           const out = transformer.handleDelta(delta);
+          console.log('[responses-debug] handleDelta returned:', out.length, 'chars');
           if (out) res.write(out);
         }
       } catch (err) {
