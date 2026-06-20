@@ -515,11 +515,8 @@ function pipeResponsesStream(upstreamResponse, res, req, publicModelId, requestB
       if (payload === '[DONE]') continue;
       try {
         const parsed = JSON.parse(payload);
-        const delta = parsed.choices?.[0]?.delta;
-        if (delta) {
-          const out = transformer.handleDelta(delta);
-          if (out) res.write(out);
-        }
+        const out = transformer.handleDelta(parsed);
+        if (out) res.write(out);
       } catch {
         // Ignore malformed chunks; upstream can have keep-alive comments.
       }

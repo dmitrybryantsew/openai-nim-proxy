@@ -207,10 +207,13 @@ function createResponsesStreamTransformer(publicModelId, requestBody) {
     items: [],          // accumulated output items for the final response
     currentText: '',    // accumulated text for output_text
     finished: false,
+    usage: null,        // captured from upstream final chunk
   };
 
   function emit(eventType, data) {
-    return `event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`;
+    // Codex parses data as JSON and looks for a `type` field. The SSE event
+    // line is just a hint; the JSON type field is authoritative.
+    return `event: ${eventType}\ndata: ${JSON.stringify({ type: eventType, ...data })}\n\n`;
   }
 
   function baseResponse(extra) {
@@ -234,9 +237,17 @@ function createResponsesStreamTransformer(publicModelId, requestBody) {
     emit('response.in_progress', { response: baseResponse() }),
   ].join('');
 
-  function handleDelta(delta) {
-    if (!delta || typeof delta !== 'object') return '';
+  function handleDelta(chunk) {
+    if (!chunk || typeof chunk !== 'object') return '';
+    const delta = chunk.choices?.[0]?.delta;
+    if (!delta) return '';
     const chunks = [];
+
+    // Capture usage if upstream included it (some providers send usage in
+    // the final chunk with delta = null).
+    if (chunk.usage) {
+      state.usage = translateUsage(chunk.usage);
+    }
 
     // Reasoning content (DeepSeek-style).
     if (typeof delta.reasoning_content === 'string' && delta.reasoning_content.length > 0) {
@@ -400,9 +411,12 @@ function createResponsesStreamTransformer(publicModelId, requestBody) {
       tools: requestBody.tools || [],
       top_p: requestBody.top_p ?? 1,
       truncation: 'disabled',
-      usage: null,
+      usage: state.usage || null,
       user: requestBody.user || null,
       metadata: {},
+      // Codex-specific fields. Codex parses response.completed into a
+      // ResponseCompleted struct that expects `id`, `usage`, `end_turn`.
+      end_turn: true,
     };
 
     chunks.push(emit('response.completed', { response: finalResponse }));
