@@ -449,7 +449,6 @@ app.post('/v1/responses', async (req, res) => {
       pipeResponsesStream(upstreamResponse, res, model.id, body);
       return;
     }
-
     const responsesObj = chatCompletionsToResponse(upstreamResponse.data, model.id, body);
     // Persist for multi-turn continuity.
     if (Array.isArray(input)) {
