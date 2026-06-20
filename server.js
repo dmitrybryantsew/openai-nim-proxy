@@ -476,6 +476,7 @@ app.post('/v1/responses', async (req, res) => {
 });
 
 function pipeResponsesStream(upstreamResponse, res, req, publicModelId, requestBody) {
+  console.log('[responses-debug] pipeResponsesStream called, status:', upstreamResponse.status, 'isStream:', upstreamResponse.data?.readable);
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
@@ -489,6 +490,7 @@ function pipeResponsesStream(upstreamResponse, res, req, publicModelId, requestB
   res.write(transformer.initial);
 
   upstreamResponse.data.on('data', (chunk) => {
+    console.log('[responses-debug] data event, chunk size:', chunk.length);
     buffer += chunk.toString('utf8');
     let idx;
     while ((idx = buffer.indexOf('\n\n')) !== -1) {
@@ -515,6 +517,7 @@ function pipeResponsesStream(upstreamResponse, res, req, publicModelId, requestB
   });
 
   upstreamResponse.data.on('end', () => {
+    console.log('[responses-debug] end event, buffer:', JSON.stringify(buffer.slice(0, 200)));
     const tail = transformer.finish();
     if (tail) res.write(tail);
     res.end();
