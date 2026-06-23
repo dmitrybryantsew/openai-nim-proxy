@@ -61,6 +61,8 @@
         <label>Limit <input id="logLimit" type="number" value="50" min="1" max="500"></label>
         <button id="refreshBtn">Refresh</button>
         <label><input id="autoRefresh" type="checkbox"> Auto-refresh (10s)</label>
+        <input id="debugKeyInput" type="password" placeholder="Proxy key (if required)" style="width:200px" autocomplete="off">
+        <button id="saveDebugKeyBtn" class="secondary">Set key</button>
       </div>
 
       <section class="pool-section">
@@ -79,14 +81,38 @@
     </main>
 
     <script>
-      const API_KEY = localStorage.getItem('proxyApiKey') || '';
+      const storedKey = localStorage.getItem('proxyApiKey') || '';
+      let currentKey = storedKey;
       let autoTimer = null;
 
+      // Pre-fill key input if we have one stored
+      const keyInput = document.getElementById('debugKeyInput');
+      if (currentKey) keyInput.value = currentKey;
+
+      document.getElementById('saveDebugKeyBtn').addEventListener('click', () => {
+        currentKey = keyInput.value.trim();
+        localStorage.setItem('proxyApiKey', currentKey);
+        refresh();
+      });
+
+      keyInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          currentKey = keyInput.value.trim();
+          localStorage.setItem('proxyApiKey', currentKey);
+          refresh();
+        }
+      });
+
       async function fetchJson(url) {
-        const res = await fetch(url, {
-          headers: { 'Authorization': 'Bearer ' + API_KEY },
-        });
-        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+        const headers = {};
+        if (currentKey) headers['Authorization'] = 'Bearer ' + currentKey;
+        const res = await fetch(url, { headers });
+        if (!res.ok) {
+          if (res.status === 401) {
+            throw new Error('401 Unauthorized — set your proxy key in the input above');
+          }
+          throw new Error(`${res.status} ${res.statusText}`);
+        }
         return res.json();
       }
 
@@ -181,8 +207,11 @@
           renderPools(poolData.pools || []);
           renderLogs(logData.entries || []);
         } catch (err) {
-          document.getElementById('poolGrid').innerHTML = `<div class="empty">Error: ${escapeHtml(err.message)}</div>`;
-          document.getElementById('logList').innerHTML = `<div class="empty">Error: ${escapeHtml(err.message)}</div>`;
+          const msg = err.message.includes('401')
+            ? `${err.message} — use the key input above, or open the chat page first to store it.`
+            : err.message;
+          document.getElementById('poolGrid').innerHTML = `<div class="empty" style="color:#fbbf24">${escapeHtml(msg)}</div>`;
+          document.getElementById('logList').innerHTML = `<div class="empty" style="color:#fbbf24">${escapeHtml(msg)}</div>`;
         }
       }
 
