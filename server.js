@@ -158,27 +158,31 @@ const debugLogger = new DebugLogger({
 process.on('SIGTERM', () => { debugLogger.flush(); process.exit(0); });
 process.on('SIGINT', () => { debugLogger.flush(); process.exit(0); });
 
+// For model listing, key pool providers fall back to the first key
+// when the singular *_API_KEY env var is not set.
+const firstKey = (pool) => pool && pool.entries[0] ? pool.entries[0].key : undefined;
+
 const registry = createModelRegistry({
   cacheFile: MODEL_CACHE_FILE,
   ttlMs: MODEL_CACHE_TTL_MS,
   requestTimeoutMs: REQUEST_TIMEOUT_MS,
   nimApiBase: providers.nim.apiBase,
-  nimApiKey: providers.nim.apiKey,
+  nimApiKey: providers.nim.apiKey || firstKey(keyPools.nim),
   nimFeaturedModels: NIM_FEATURED_MODELS,
   chutesApiBase: providers.chutes.apiBase,
-  chutesApiKey: providers.chutes.apiKey,
+  chutesApiKey: providers.chutes.apiKey || firstKey(keyPools.chutes),
   ollamaApiBase: providers.ollama.apiBase,
-  ollamaApiKey: providers.ollama.apiKey,
+  ollamaApiKey: providers.ollama.apiKey || firstKey(keyPools.ollama),
   ollamaEnabled: providers.ollama.enabled,
   g4fApiBase: providers.g4f.apiBase,
-  g4fApiKey: providers.g4f.apiKey,
+  g4fApiKey: providers.g4f.apiKey || firstKey(keyPools.g4f),
   g4fEnabled: providers.g4f.enabled,
   g4fModels: G4F_MODELS,
   g4fModelAllowlist: G4F_MODEL_ALLOWLIST,
   g4fProbeEnabled: G4F_PROBE_ENABLED,
   g4fProbeTimeoutMs: G4F_PROBE_TIMEOUT_MS,
   openRouterApiBase: providers.openrouter.apiBase,
-  openRouterApiKey: providers.openrouter.apiKey,
+  openRouterApiKey: providers.openrouter.apiKey || firstKey(keyPools.openrouter),
   openRouterIncludePaid: providers.openrouter.includePaid,
   openRouterIncludeMultimodalOutput: providers.openrouter.includeMultimodalOutput,
   openRouterAppUrl: providers.openrouter.appUrl,
