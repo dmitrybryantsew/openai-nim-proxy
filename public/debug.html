@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Proxy Debug</title>
+    <link rel="stylesheet" href="/styles.css">
+    <style>
+      .debug-shell { max-width: 1100px; margin: 0 auto; padding: 1.5rem; }
+      .debug-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+      .debug-header h1 { margin: 0; font-size: 1.4rem; }
+      .debug-header p { margin: 0; color: var(--text-dim, #888); font-size: 0.85rem; }
+      .debug-controls { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-bottom: 1rem; }
+      .debug-controls label { font-size: 0.85rem; display: flex; align-items: center; gap: 0.3rem; }
+      .debug-controls input[type="number"] { width: 70px; }
+      .debug-controls button { padding: 0.3rem 0.8rem; cursor: pointer; }
+      .pool-section { margin-bottom: 1.5rem; }
+      .pool-section h2 { font-size: 1.1rem; margin: 0 0 0.5rem; border-bottom: 1px solid var(--border, #333); padding-bottom: 0.3rem; }
+      .pool-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 0.75rem; }
+      .pool-card { border: 1px solid var(--border, #333); border-radius: 6px; padding: 0.75rem; font-size: 0.85rem; }
+      .pool-card .pool-name { font-weight: bold; margin-bottom: 0.4rem; }
+      .pool-card .pool-stats { display: flex; gap: 1rem; margin-bottom: 0.4rem; font-size: 0.8rem; color: var(--text-dim, #888); }
+      .pool-card .pool-stats span { white-space: nowrap; }
+      .key-row { display: flex; justify-content: space-between; padding: 0.2rem 0; border-top: 1px dotted var(--border, #444); font-size: 0.8rem; }
+      .key-row:first-of-type { border-top: none; }
+      .key-row .key-label { font-family: monospace; }
+      .key-row .key-status { font-family: monospace; font-size: 0.75rem; }
+      .key-available { color: #4ade80; }
+      .key-cooling { color: #fbbf24; }
+      .key-exhausted { color: #f87171; }
+      .log-section { margin-bottom: 1.5rem; }
+      .log-section h2 { font-size: 1.1rem; margin: 0 0 0.5rem; border-bottom: 1px solid var(--border, #333); padding-bottom: 0.3rem; }
+      .log-entry { border: 1px solid var(--border, #333); border-radius: 4px; padding: 0.5rem; margin-bottom: 0.4rem; font-size: 0.82rem; }
+      .log-entry-header { display: flex; gap: 0.75rem; align-items: center; margin-bottom: 0.3rem; flex-wrap: wrap; }
+      .log-entry-header .log-time { color: var(--text-dim, #888); font-family: monospace; font-size: 0.75rem; }
+      .log-entry-header .log-provider { background: var(--border, #333); padding: 0.1rem 0.4rem; border-radius: 3px; font-size: 0.75rem; }
+      .log-entry-header .log-key { font-family: monospace; font-size: 0.75rem; color: var(--text-dim, #888); }
+      .log-entry-header .log-status { font-family: monospace; font-size: 0.75rem; font-weight: bold; padding: 0.1rem 0.3rem; border-radius: 3px; }
+      .log-status-ok { color: #4ade80; }
+      .log-status-err { color: #f87171; }
+      .log-entry-body { font-family: monospace; font-size: 0.78rem; white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow-y: auto; }
+      .log-entry-body details { margin-top: 0.2rem; }
+      .log-entry-body summary { cursor: pointer; color: var(--text-dim, #888); }
+      .empty { color: var(--text-dim, #888); font-style: italic; padding: 1rem 0; }
+    </style>
+  </head>
+  <body>
+    <main class="debug-shell">
+      <header class="debug-header">
+        <div>
+          <h1>Proxy Debug</h1>
+          <p>Key pool status &amp; request log</p>
+        </div>
+        <nav>
+          <a href="/" class="nav-link">Chat</a>
+          <a href="/tools.html" class="nav-link">Tools</a>
+        </nav>
+      </header>
+
+      <div class="debug-controls">
+        <label>Limit <input id="logLimit" type="number" value="50" min="1" max="500"></label>
+        <button id="refreshBtn">Refresh</button>
+        <label><input id="autoRefresh" type="checkbox"> Auto-refresh (10s)</label>
+      </div>
+
+      <section class="pool-section">
+        <h2>Key Pools</h2>
+        <div id="poolGrid" class="pool-grid">
+          <div class="empty">Loading…</div>
+        </div>
+      </section>
+
+      <section class="log-section">
+        <h2>Request Log <span id="logCount" style="font-weight:normal;font-size:0.85rem;color:var(--text-dim,#888)"></span></h2>
+        <div id="logList">
+          <div class="empty">Loading…</div>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const API_KEY = localStorage.getItem('proxyApiKey') || '';
+      let autoTimer = null;
+
+      async function fetchJson(url) {
+        const res = await fetch(url, {
+          headers: { 'Authorization': 'Bearer ' + API_KEY },
+        });
+        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+        return res.json();
+      }
+
+      function formatMs(ms) {
+        if (ms <= 0) return 'ready';
+        if (ms < 60000) return Math.ceil(ms / 1000) + 's';
+        return Math.ceil(ms / 60000) + 'm';
+      }
+
+      function renderPools(pools) {
+        const grid = document.getElementById('poolGrid');
+        if (!pools || pools.length === 0) {
+          grid.innerHTML = '<div class="empty">No key pools configured.</div>';
+          return;
+        }
+        grid.innerHTML = pools.map(pool => {
+          const keys = (pool.keys || []).map(k => {
+            const cls = k.available ? 'key-available' : 'key-cooling';
+            const status = k.available
+              ? 'available'
+              : `cooling ${formatMs(k.cooldown_remaining_ms)} (${k.consecutive_failures}x)`;
+            return `<div class="key-row">
+              <span class="key-label">${k.label} (${k.masked})</span>
+              <span class="key-status ${cls}">${status}</span>
+            </div>`;
+          }).join('');
+          return `<div class="pool-card">
+            <div class="pool-name">${pool.provider}</div>
+            <div class="pool-stats">
+              <span>${pool.available}/${pool.total_keys} available</span>
+              <span>${pool.cooling} cooling</span>
+            </div>
+            ${keys}
+          </div>`;
+        }).join('');
+      }
+
+      function renderLogs(logs) {
+        const list = document.getElementById('logList');
+        document.getElementById('logCount').textContent = `(${logs.length} entries)`;
+        if (!logs || logs.length === 0) {
+          list.innerHTML = '<div class="empty">No logs yet.</div>';
+          return;
+        }
+        list.innerHTML = logs.map(log => {
+          const statusCls = (log.status >= 200 && log.status < 300) ? 'log-status-ok' : 'log-status-err';
+          const time = log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : '?';
+          const req = log.request || {};
+          const res = log.response || {};
+          const reqPreview = req.last_user_preview ? truncate(req.last_user_preview, 150) : '(no preview)';
+          const resPreview = res.content_preview ? truncate(res.content_preview, 200)
+                         : res.error ? truncate(res.error, 200)
+                         : '(no preview)';
+          return `<div class="log-entry">
+            <div class="log-entry-header">
+              <span class="log-time">${time}</span>
+              <span class="log-provider">${log.provider}</span>
+              <span class="log-key">${log.key_label}</span>
+              <span class="log-status ${statusCls}">${log.status}</span>
+              <span class="log-time">${log.latency_ms}ms</span>
+              ${log.model ? `<span class="log-key">${log.model}</span>` : ''}
+            </div>
+            <div class="log-entry-body">
+              <div>Req: ${escapeHtml(reqPreview)}</div>
+              <div>Res: ${escapeHtml(resPreview)}</div>
+              ${log.error ? `<div style="color:#f87171">Error: ${escapeHtml(log.error)}</div>` : ''}
+              <details><summary>Full details</summary>
+                <pre>${escapeHtml(JSON.stringify(log, null, 2))}</pre>
+              </details>
+            </div>
+          </div>`;
+        }).join('');
+      }
+
+      function truncate(s, n) {
+        if (!s) return '';
+        return s.length > n ? s.slice(0, n) + '…' : s;
+      }
+
+      function escapeHtml(s) {
+        if (s == null) return '';
+        return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+      }
+
+      async function refresh() {
+        const limit = document.getElementById('logLimit').value || 50;
+        try {
+          const [poolData, logData] = await Promise.all([
+            fetchJson('/admin/debug/key-pools'),
+            fetchJson(`/admin/debug/logs?limit=${limit}`),
+          ]);
+          renderPools(poolData.pools || []);
+          renderLogs(logData.entries || []);
+        } catch (err) {
+          document.getElementById('poolGrid').innerHTML = `<div class="empty">Error: ${escapeHtml(err.message)}</div>`;
+          document.getElementById('logList').innerHTML = `<div class="empty">Error: ${escapeHtml(err.message)}</div>`;
+        }
+      }
+
+      document.getElementById('refreshBtn').addEventListener('click', refresh);
+
+      document.getElementById('autoRefresh').addEventListener('change', (e) => {
+        if (e.target.checked) {
+          autoTimer = setInterval(refresh, 10000);
+        } else if (autoTimer) {
+          clearInterval(autoTimer);
+          autoTimer = null;
+        }
+      });
+
+      document.getElementById('logLimit').addEventListener('change', refresh);
+
+      refresh();
+    </script>
+  </body>
+</html>

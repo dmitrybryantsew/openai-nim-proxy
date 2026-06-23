@@ -6,6 +6,8 @@ const cors = require('cors');
 const axios = require('axios');
 const { buildOpenRouterHeaders, buildOptionalBearerHeaders, createModelRegistry } = require('./src/model-registry');
 const { ChatStore } = require('./src/chat-store');
+const { KeyPool, parseKeys, maskKey } = require('./src/key-pool');
+const { DebugLogger } = require('./src/debug-log');
 const {
   responsesToChatCompletions,
   chatCompletionsToResponse,
@@ -113,6 +115,49 @@ const providers = {
   },
 };
 
+// --- Key pools with round-robin + exponential cooldown ---
+// Supports comma-separated *_API_KEYS (plural) for multiple keys per provider.
+// Falls back to single *_API_KEY if the plural form is absent.
+const KEY_COOLDOWN_BASE_MS = Number(process.env.KEY_COOLDOWN_BASE_MS || 10000);
+const KEY_COOLDOWN_MAX_MS = Number(process.env.KEY_COOLDOWN_MAX_MS || 24 * 60 * 60 * 1000);
+
+function buildKeyPool(providerName, pluralEnv, singularEnv) {
+  const keys = parseKeys(pluralEnv).length > 0 ? parseKeys(pluralEnv) : parseKeys(singularEnv);
+  if (keys.length === 0) return null;
+  return new KeyPool({
+    keys,
+    provider: providerName,
+    baseCooldownMs: KEY_COOLDOWN_BASE_MS,
+    maxCooldownMs: KEY_COOLDOWN_MAX_MS,
+  });
+}
+
+const keyPools = {
+  nim: buildKeyPool('nim', process.env.NIM_API_KEYS, process.env.NIM_API_KEY),
+  chutes: buildKeyPool('chutes', process.env.CHUTES_API_KEYS, process.env.CHUTES_API_KEY),
+  openrouter: buildKeyPool('openrouter', process.env.OPENROUTER_API_KEYS, process.env.OPENROUTER_API_KEY),
+  // ollama and g4f typically don't need key rotation (local/no-auth), but support it if configured
+  ollama: buildKeyPool('ollama', process.env.OLLAMA_API_KEYS, process.env.OLLAMA_API_KEY),
+  g4f: buildKeyPool('g4f', process.env.G4F_API_KEYS, process.env.G4F_API_KEY),
+};
+
+// --- Debug logger ---
+const DEBUG_LOG_ENABLED = parseBoolean(process.env.DEBUG_LOG_ENABLED, true);
+const DEBUG_LOG_RING_SIZE = Number(process.env.DEBUG_LOG_RING_SIZE || 250);
+const DEBUG_LOG_FILE_MAX = Number(process.env.DEBUG_LOG_FILE_MAX || 500);
+const DEBUG_LOG_FILE = process.env.DEBUG_LOG_FILE || path.join(__dirname, 'data', 'debug-log.json');
+
+const debugLogger = new DebugLogger({
+  enabled: DEBUG_LOG_ENABLED,
+  ringSize: DEBUG_LOG_RING_SIZE,
+  fileMaxEntries: DEBUG_LOG_FILE_MAX,
+  filePath: DEBUG_LOG_FILE,
+});
+
+// Flush debug log on shutdown
+process.on('SIGTERM', () => { debugLogger.flush(); process.exit(0); });
+process.on('SIGINT', () => { debugLogger.flush(); process.exit(0); });
+
 const registry = createModelRegistry({
   cacheFile: MODEL_CACHE_FILE,
   ttlMs: MODEL_CACHE_TTL_MS,
@@ -213,6 +258,16 @@ app.get('/health', (_req, res) => {
       piper_binary: PIPER_BINARY,
       piper_model: PIPER_MODEL,
     },
+    key_pools: Object.fromEntries(
+      Object.entries(keyPools)
+        .filter(([, pool]) => pool !== null)
+        .map(([name, pool]) => [name, {
+          total_keys: pool.entries.length,
+          available: pool.entries.filter((e) => !e.isCooling).length,
+          cooling: pool.entries.filter((e) => e.isCooling).length,
+        }])
+    ),
+    debug_log: debugLogger.getStatus(),
   });
 });
 
@@ -245,6 +300,44 @@ app.get('/admin/models', asyncHandler(async (req, res) => {
     data: filteredModels,
   });
 }));
+
+// --- Debug endpoints ---
+
+app.get('/admin/debug/key-pools', (req, res) => {
+  const pools = [];
+  for (const [name, pool] of Object.entries(keyPools)) {
+    if (pool) {
+      pools.push(pool.getStatus());
+    }
+  }
+  res.json({
+    object: 'debug.key_pools',
+    pools,
+  });
+});
+
+app.get('/admin/debug/logs', (req, res) => {
+  const limit = Math.min(Number(req.query.limit || 50), 500);
+  const entries = debugLogger.getRecent(limit);
+  res.json({
+    object: 'debug.logs',
+    count: entries.length,
+    limit,
+    entries,
+  });
+});
+
+app.get('/admin/debug/status', (req, res) => {
+  res.json({
+    object: 'debug.status',
+    debug_log: debugLogger.getStatus(),
+    key_pools: Object.fromEntries(
+      Object.entries(keyPools)
+        .filter(([, pool]) => pool !== null)
+        .map(([name, pool]) => [name, pool.getStatus()])
+    ),
+  });
+});
 
 app.get('/api/chats', (req, res) => {
   const limit = Math.min(Number(req.query.limit || 100), 500);
@@ -401,6 +494,9 @@ app.post('/v1/chat/completions', async (req, res) => {
   } catch (error) {
     const status = error.response?.status || error.status || 500;
     const message = error.response?.data?.error?.message || error.message || 'Internal server error';
+    if (error.headers?.['Retry-After']) {
+      res.setHeader('Retry-After', error.headers['Retry-After']);
+    }
     res.status(status).json(openAiError(message, status >= 500 ? 'server_error' : 'invalid_request_error', status));
   }
 });
@@ -727,15 +823,139 @@ async function requestChatCompletion(body, stream, resolvedModel) {
   const model = resolvedModel || await registry.resolveModel(body.model);
   const upstreamRequest = buildUpstreamRequest(body, model, stream);
   const upstream = getProviderConfig(model.provider);
+  const pool = keyPools[model.provider];
 
-  const response = await axios.post(`${upstream.apiBase}/chat/completions`, upstreamRequest, {
-    headers: buildProviderHeaders(model.provider, stream),
-    responseType: stream ? 'stream' : 'json',
-    timeout: REQUEST_TIMEOUT_MS,
-    validateStatus: () => true,
-  });
+  // If no key pool for this provider, use the original single-key path
+  if (!pool) {
+    const startedAt = Date.now();
+    const response = await axios.post(`${upstream.apiBase}/chat/completions`, upstreamRequest, {
+      headers: buildProviderHeaders(model.provider, stream),
+      responseType: stream ? 'stream' : 'json',
+      timeout: REQUEST_TIMEOUT_MS,
+      validateStatus: () => true,
+    });
 
-  return { response, model };
+    debugLogger.log({
+      provider: model.provider,
+      keyLabel: 'single-key',
+      model: model.id,
+      request: upstreamRequest,
+      response: stream ? null : response.data,
+      status: response.status,
+      latencyMs: Date.now() - startedAt,
+    });
+
+    return { response, model };
+  }
+
+  // Key pool path: round-robin with retry-on-429
+  const maxAttempts = pool.entries.length;
+  let lastError = null;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const keyEntry = pool.pick();
+
+    if (!keyEntry) {
+      // All keys exhausted — find the soonest available
+      const soonest = pool.pickSoonestAvailable();
+      const retryAfterSec = soonest ? Math.ceil(soonest.cooldownRemainingMs / 1000) : 60;
+      const err = new Error(`All ${pool.provider} keys are rate-limited. Retry in ${retryAfterSec}s.`);
+      err.status = 429;
+      err.headers = { 'Retry-After': String(retryAfterSec) };
+      throw err;
+    }
+
+    const startedAt = Date.now();
+    let response;
+
+    try {
+      response = await axios.post(`${upstream.apiBase}/chat/completions`, upstreamRequest, {
+        headers: buildProviderHeaders(model.provider, stream, keyEntry),
+        responseType: stream ? 'stream' : 'json',
+        timeout: REQUEST_TIMEOUT_MS,
+        validateStatus: () => true,
+      });
+    } catch (error) {
+      // Network/timeout error — mark key as failed with default cooldown
+      pool.markFailed(keyEntry, null, error.message);
+      debugLogger.log({
+        provider: model.provider,
+        keyLabel: keyEntry.label,
+        model: model.id,
+        request: upstreamRequest,
+        response: null,
+        status: 0,
+        latencyMs: Date.now() - startedAt,
+        error: error.message,
+      });
+      lastError = error;
+      continue;
+    }
+
+    const latencyMs = Date.now() - startedAt;
+
+    // Check for rate-limit / auth errors that warrant key rotation
+    if (response.status === 429 || response.status === 403) {
+      const retryAfter = parseRetryAfter(response.headers['retry-after']);
+      const errorMsg = response.data?.error?.message || `HTTP ${response.status}`;
+      pool.markFailed(keyEntry, retryAfter, errorMsg);
+
+      debugLogger.log({
+        provider: model.provider,
+        keyLabel: keyEntry.label,
+        model: model.id,
+        request: upstreamRequest,
+        response: stream ? null : response.data,
+        status: response.status,
+        latencyMs,
+        error: `Key rate-limited: ${errorMsg}`,
+      });
+
+      lastError = Object.assign(new Error(errorMsg), { status: response.status });
+      continue; // Try next key
+    }
+
+    // Success (or non-retryable error like 400/500) — mark key and return
+    if (response.status >= 200 && response.status < 300) {
+      pool.markSuccess(keyEntry);
+    }
+
+    debugLogger.log({
+      provider: model.provider,
+      keyLabel: keyEntry.label,
+      model: model.id,
+      request: upstreamRequest,
+      response: stream ? null : response.data,
+      status: response.status,
+      latencyMs,
+    });
+
+    return { response, model };
+  }
+
+  // All keys tried and failed with 429/403
+  const soonest = pool.pickSoonestAvailable();
+  const retryAfterSec = soonest ? Math.ceil(soonest.cooldownRemainingMs / 1000) : 60;
+  const err = new Error(`All ${pool.provider} keys are rate-limited after ${maxAttempts} attempts. Retry in ${retryAfterSec}s.`);
+  err.status = 429;
+  err.headers = { 'Retry-After': String(retryAfterSec) };
+  throw err;
+}
+
+function parseRetryAfter(headerValue) {
+  if (!headerValue) return null;
+  // Could be seconds (number) or HTTP date
+  const seconds = Number(headerValue);
+  if (Number.isFinite(seconds) && seconds > 0) {
+    return Math.min(seconds, 86400); // Cap at 1 day
+  }
+  // Try HTTP date format
+  const date = Date.parse(headerValue);
+  if (Number.isFinite(date)) {
+    const diff = Math.ceil((date - Date.now()) / 1000);
+    return diff > 0 ? Math.min(diff, 86400) : null;
+  }
+  return null;
 }
 
 async function pickModelsForTest(body = {}) {
@@ -1050,8 +1270,8 @@ function getProviderConfig(provider) {
     return config;
   }
 
-  if (!config.apiKey) {
-    throw Object.assign(new Error(`${provider.toUpperCase()}_API_KEY is required for chat completions and tests`), { status: 500 });
+  if (!config.apiKey && !keyPools[provider]) {
+    throw Object.assign(new Error(`${provider.toUpperCase()}_API_KEY (or ${provider.toUpperCase()}_API_KEYS) is required for chat completions and tests`), { status: 500 });
   }
 
   return config;
@@ -1617,10 +1837,17 @@ async function pathExists(filePath) {
   }
 }
 
-function buildProviderHeaders(provider, stream) {
+function buildProviderHeaders(provider, stream, keyEntry) {
+  // If keyEntry is provided (from key pool), use its key. Otherwise fall back to providers config.
+  const nimKey = keyEntry ? keyEntry.key : providers.nim.apiKey;
+  const chutesKey = keyEntry ? keyEntry.key : providers.chutes.apiKey;
+  const ollamaKey = keyEntry ? keyEntry.key : providers.ollama.apiKey;
+  const g4fKey = keyEntry ? keyEntry.key : providers.g4f.apiKey;
+  const openRouterKey = keyEntry ? keyEntry.key : providers.openrouter.apiKey;
+
   if (provider === 'nim') {
     return {
-      Authorization: `Bearer ${providers.nim.apiKey}`,
+      Authorization: `Bearer ${nimKey}`,
       'Content-Type': 'application/json',
       Accept: stream ? 'text/event-stream' : 'application/json',
     };
@@ -1628,7 +1855,7 @@ function buildProviderHeaders(provider, stream) {
 
   if (provider === 'chutes') {
     return {
-      Authorization: `Bearer ${providers.chutes.apiKey}`,
+      Authorization: `Bearer ${chutesKey}`,
       'Content-Type': 'application/json',
       Accept: stream ? 'text/event-stream' : 'application/json',
     };
@@ -1636,14 +1863,14 @@ function buildProviderHeaders(provider, stream) {
 
   if (provider === 'ollama') {
     return {
-      ...buildOptionalBearerHeaders(providers.ollama.apiKey, stream),
+      ...buildOptionalBearerHeaders(ollamaKey, stream),
       'Content-Type': 'application/json',
     };
   }
 
   if (provider === 'g4f') {
     return {
-      ...buildOptionalBearerHeaders(providers.g4f.apiKey, stream),
+      ...buildOptionalBearerHeaders(g4fKey, stream),
       'Content-Type': 'application/json',
     };
   }
@@ -1651,7 +1878,7 @@ function buildProviderHeaders(provider, stream) {
   if (provider === 'openrouter') {
     return {
       ...buildOpenRouterHeaders({
-        openRouterApiKey: providers.openrouter.apiKey,
+        openRouterApiKey: openRouterKey,
         openRouterAppUrl: providers.openrouter.appUrl,
         openRouterAppTitle: providers.openrouter.appTitle,
       }, stream),
