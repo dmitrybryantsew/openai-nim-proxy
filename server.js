@@ -89,6 +89,15 @@ const providers = {
     apiBase: trimTrailingSlash(process.env.NIM_API_BASE || 'https://integrate.api.nvidia.com/v1'),
     apiKey: process.env.NIM_API_KEY,
   },
+  tokenrouter: {
+    apiBase: trimTrailingSlash(process.env.TOKENROUTER_API_BASE || 'https://api.tokenrouter.com/v1'),
+    apiKey: process.env.TOKENROUTER_API_KEY,
+  },
+  inferx: {
+    apiBase: trimTrailingSlash(process.env.INFERX_API_BASE || 'https://model.inferx.net/endpoints/v1'),
+    apiKey: process.env.INFERX_API_KEY,
+    tenantId: process.env.INFERX_TENANT_ID || 'tn-gwigaxe616',
+  },
   chutes: {
     apiBase: trimTrailingSlash(process.env.CHUTES_API_BASE || 'https://llm.chutes.ai/v1'),
     apiKey: process.env.CHUTES_API_KEY,
@@ -136,6 +145,8 @@ const keyPools = {
   nim: buildKeyPool('nim', process.env.NIM_API_KEYS, process.env.NIM_API_KEY),
   chutes: buildKeyPool('chutes', process.env.CHUTES_API_KEYS, process.env.CHUTES_API_KEY),
   openrouter: buildKeyPool('openrouter', process.env.OPENROUTER_API_KEYS, process.env.OPENROUTER_API_KEY),
+  tokenrouter: buildKeyPool('tokenrouter', process.env.TOKENROUTER_API_KEYS, process.env.TOKENROUTER_API_KEY),
+  inferx: buildKeyPool('inferx', process.env.INFERX_API_KEYS, process.env.INFERX_API_KEY),
   // ollama and g4f typically don't need key rotation (local/no-auth), but support it if configured
   ollama: buildKeyPool('ollama', process.env.OLLAMA_API_KEYS, process.env.OLLAMA_API_KEY),
   g4f: buildKeyPool('g4f', process.env.G4F_API_KEYS, process.env.G4F_API_KEY),
@@ -171,6 +182,10 @@ const registry = createModelRegistry({
   nimFeaturedModels: NIM_FEATURED_MODELS,
   chutesApiBase: providers.chutes.apiBase,
   chutesApiKey: providers.chutes.apiKey || firstKey(keyPools.chutes),
+  tokenrouterApiBase: providers.tokenrouter.apiBase,
+  tokenrouterApiKey: providers.tokenrouter.apiKey || firstKey(keyPools.tokenrouter),
+  inferxApiBase: providers.inferx.apiBase,
+  inferxApiKey: providers.inferx.apiKey || firstKey(keyPools.inferx),
   ollamaApiBase: providers.ollama.apiBase,
   ollamaApiKey: providers.ollama.apiKey || firstKey(keyPools.ollama),
   ollamaEnabled: providers.ollama.enabled,
@@ -831,29 +846,45 @@ async function requestChatCompletion(body, stream, resolvedModel) {
 
   // If no key pool for this provider, use the original single-key path
   if (!pool) {
-    const startedAt = Date.now();
-    const response = await axios.post(`${upstream.apiBase}/chat/completions`, upstreamRequest, {
-      headers: buildProviderHeaders(model.provider, stream),
-      responseType: stream ? 'stream' : 'json',
-      timeout: REQUEST_TIMEOUT_MS,
-      validateStatus: () => true,
-    });
+    const isKimi = model.provider === 'tokenrouter' && model.provider_model_id.includes('kimi');
+    const singleKeyMaxAttempts = isKimi ? 20 : 1;
+    let response;
 
-    debugLogger.log({
-      provider: model.provider,
-      keyLabel: 'single-key',
-      model: model.id,
-      request: upstreamRequest,
-      response: stream ? null : response.data,
-      status: response.status,
-      latencyMs: Date.now() - startedAt,
-    });
+    for (let attempt = 0; attempt < singleKeyMaxAttempts; attempt++) {
+      const startedAt = Date.now();
+      response = await axios.post(`${upstream.apiBase}/chat/completions`, upstreamRequest, {
+        headers: buildProviderHeaders(model.provider, stream),
+        responseType: stream ? 'stream' : 'json',
+        timeout: REQUEST_TIMEOUT_MS,
+        validateStatus: () => true,
+      });
+
+      debugLogger.log({
+        provider: model.provider,
+        keyLabel: 'single-key',
+        model: model.id,
+        request: upstreamRequest,
+        response: stream ? null : response.data,
+        status: response.status,
+        latencyMs: Date.now() - startedAt,
+      });
+
+      if (isKimi && (response.status === 429 || response.status === 403 || response.status === 400)) {
+        if (attempt < singleKeyMaxAttempts - 1) {
+          await new Promise(r => setTimeout(r, 1000));
+          continue;
+        }
+      }
+
+      break;
+    }
 
     return { response, model };
   }
 
   // Key pool path: round-robin with retry-on-429
-  const maxAttempts = pool.entries.length;
+  const isKimiPool = model.provider === 'tokenrouter' && model.provider_model_id.includes('kimi');
+  const maxAttempts = isKimiPool ? Math.max(pool.entries.length, 20) : pool.entries.length;
   let lastError = null;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -899,7 +930,9 @@ async function requestChatCompletion(body, stream, resolvedModel) {
     const latencyMs = Date.now() - startedAt;
 
     // Check for rate-limit / auth errors that warrant key rotation
-    if (response.status === 429 || response.status === 403) {
+    const needsRetry = response.status === 429 || response.status === 403 || (isKimiPool && response.status === 400);
+
+    if (needsRetry) {
       const retryAfter = parseRetryAfter(response.headers['retry-after']);
       const errorMsg = response.data?.error?.message || `HTTP ${response.status}`;
       pool.markFailed(keyEntry, retryAfter, errorMsg);
@@ -916,6 +949,9 @@ async function requestChatCompletion(body, stream, resolvedModel) {
       });
 
       lastError = Object.assign(new Error(errorMsg), { status: response.status });
+      if (isKimiPool && attempt < maxAttempts - 1) {
+          await new Promise(r => setTimeout(r, 1000));
+      }
       continue; // Try next key
     }
 
@@ -1848,10 +1884,29 @@ function buildProviderHeaders(provider, stream, keyEntry) {
   const ollamaKey = keyEntry ? keyEntry.key : providers.ollama.apiKey;
   const g4fKey = keyEntry ? keyEntry.key : providers.g4f.apiKey;
   const openRouterKey = keyEntry ? keyEntry.key : providers.openrouter.apiKey;
+  const tokenrouterKey = keyEntry ? keyEntry.key : providers.tokenrouter.apiKey;
+  const inferxKey = keyEntry ? keyEntry.key : providers.inferx.apiKey;
 
   if (provider === 'nim') {
     return {
       Authorization: `Bearer ${nimKey}`,
+      'Content-Type': 'application/json',
+      Accept: stream ? 'text/event-stream' : 'application/json',
+    };
+  }
+
+  if (provider === 'tokenrouter') {
+    return {
+      Authorization: `Bearer ${tokenrouterKey}`,
+      'Content-Type': 'application/json',
+      Accept: stream ? 'text/event-stream' : 'application/json',
+    };
+  }
+
+  if (provider === 'inferx') {
+    return {
+      Authorization: `Bearer ${inferxKey}`,
+      'X-Tenant-Id': providers.inferx.tenantId,
       'Content-Type': 'application/json',
       Accept: stream ? 'text/event-stream' : 'application/json',
     };
