@@ -25,6 +25,10 @@ function createModelRegistry(options) {
     openRouterApiBase: trimTrailingSlash(options.openRouterApiBase),
     openRouterApiKey: options.openRouterApiKey,
     openRouterIncludePaid: options.openRouterIncludePaid,
+    tokenrouterApiBase: trimTrailingSlash(options.tokenrouterApiBase),
+    tokenrouterApiKey: options.tokenrouterApiKey,
+    inferxApiBase: trimTrailingSlash(options.inferxApiBase),
+    inferxApiKey: options.inferxApiKey,
     openRouterIncludeMultimodalOutput: options.openRouterIncludeMultimodalOutput,
     openRouterAppUrl: options.openRouterAppUrl,
     openRouterAppTitle: options.openRouterAppTitle,
@@ -42,12 +46,14 @@ function createModelRegistry(options) {
   }
 
   async function refreshModels() {
-    const [nimModels, chutesModels, ollamaModels, g4fModels, openRouterModels] = await Promise.all([
+    const [nimModels, chutesModels, ollamaModels, g4fModels, openRouterModels, tokenrouterModels, inferxModels] = await Promise.all([
       fetchNimModels(config).catch(() => []),
       fetchChutesModels(config).catch(() => []),
       fetchOllamaModels(config).catch(() => []),
       fetchG4fModels(config).catch(() => buildConfiguredG4fModels(config)),
       fetchOpenRouterModels(config).catch(() => []),
+      fetchTokenRouterModels(config).catch(() => []),
+      fetchInferxModels(config).catch(() => []),
     ]);
 
     const models = uniqueById([
@@ -57,6 +63,8 @@ function createModelRegistry(options) {
       ...ollamaModels,
       ...g4fModels,
       ...openRouterModels,
+      ...tokenrouterModels,
+      ...inferxModels,
     ]).sort((a, b) => {
       if (a.provider !== b.provider) {
         return a.provider.localeCompare(b.provider);
@@ -370,6 +378,72 @@ async function fetchOpenRouterModels(config) {
     }));
 }
 
+async function fetchTokenRouterModels(config) {
+  if (!config.tokenrouterApiKey) {
+    return [];
+  }
+
+  const response = await axios.get(`${config.tokenrouterApiBase}/models`, {
+    headers: buildOptionalBearerHeaders(config.tokenrouterApiKey, false),
+    timeout: config.requestTimeoutMs,
+    validateStatus: () => true,
+  });
+
+  if (response.status < 200 || response.status >= 300) {
+    return [];
+  }
+
+  return (response.data?.data || [])
+    .filter((model) => model?.id)
+    .map((model) => ({
+      id: `tokenrouter:${model.id}`,
+      object: 'model',
+      created: normalizeModelCreated(model.created),
+      owned_by: model.owned_by || 'tokenrouter',
+      provider: 'tokenrouter',
+      provider_model_id: model.id,
+      name: model.name || model.id,
+      free: null,
+      pricing: model.pricing || null,
+      context_length: model.context_length || null,
+      architecture: model.architecture || null,
+      source: 'tokenrouter',
+    }));
+}
+
+async function fetchInferxModels(config) {
+  if (!config.inferxApiKey) {
+    return [];
+  }
+
+  const response = await axios.get(`${config.inferxApiBase}/models`, {
+    headers: buildOptionalBearerHeaders(config.inferxApiKey, false),
+    timeout: config.requestTimeoutMs,
+    validateStatus: () => true,
+  });
+
+  if (response.status < 200 || response.status >= 300) {
+    return [];
+  }
+
+  return (response.data?.data || [])
+    .filter((model) => model?.id)
+    .map((model) => ({
+      id: `inferx:${model.id}`,
+      object: 'model',
+      created: normalizeModelCreated(model.created),
+      owned_by: model.owned_by || 'inferx',
+      provider: 'inferx',
+      provider_model_id: model.id,
+      name: model.name || model.id,
+      free: null,
+      pricing: model.pricing || null,
+      context_length: model.context_length || null,
+      architecture: model.architecture || null,
+      source: 'inferx',
+    }));
+}
+
 function isOpenRouterFree(model) {
   const pricing = model.pricing || {};
   const prompt = Number(pricing.prompt);
@@ -424,6 +498,20 @@ function parseDirectModel(publicModelId) {
     const providerModelId = publicModelId.slice('g4f:'.length);
     if (providerModelId) {
       return directModel('g4f', providerModelId, publicModelId);
+    }
+  }
+
+  if (publicModelId.startsWith('tokenrouter:')) {
+    const providerModelId = publicModelId.slice('tokenrouter:'.length);
+    if (providerModelId) {
+      return directModel('tokenrouter', providerModelId, publicModelId);
+    }
+  }
+
+  if (publicModelId.startsWith('inferx:')) {
+    const providerModelId = publicModelId.slice('inferx:'.length);
+    if (providerModelId) {
+      return directModel('inferx', providerModelId, publicModelId);
     }
   }
 
