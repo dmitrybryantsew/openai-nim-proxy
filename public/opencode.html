@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>OpenCode Config Export</title>
+    <link rel="stylesheet" href="/styles.css">
+    <style>
+      .export-container {
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+      .controls {
+        display: flex;
+        gap: 10px;
+        align-items: flex-end;
+        background: var(--panel);
+        padding: 15px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+      }
+      .controls .field {
+        flex: 1;
+      }
+      .provider-group {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 15px;
+        margin-bottom: 15px;
+      }
+      .provider-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-weight: bold;
+        font-size: 1.1em;
+        margin-bottom: 10px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid var(--border);
+      }
+      .model-list {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .model-item {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        font-size: 0.9em;
+      }
+      .model-item label {
+        word-break: break-word;
+        flex: 1;
+        line-height: 1.2;
+      }
+      .model-item input {
+        margin-top: 2px;
+        height: auto;
+      }
+      .provider-header input {
+        height: auto;
+      }
+      .config-output {
+        width: 100%;
+        height: 400px;
+        font-family: monospace;
+        background: var(--panel);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 15px;
+        resize: vertical;
+      }
+      .output-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="app-shell">
+      <div class="export-container">
+        <header>
+          <h1>OpenCode Config Export</h1>
+          <p>Select models to generate OpenCode provider config</p>
+          <a href="/tools.html" class="nav-link">&larr; Back to Tools</a>
+        </header>
+
+        <div class="controls">
+          <label class="field">
+            <span>Proxy key</span>
+            <input id="apiKeyInput" type="password" autocomplete="off" placeholder="Bearer key">
+          </label>
+          <label class="field">
+            <span>Base URL</span>
+            <input id="baseUrlInput" type="text" placeholder="http://localhost:3000/v1">
+          </label>
+          <button id="loadModelsBtn">Load Models</button>
+        </div>
+
+        <div id="statusMessage" class="status"></div>
+
+        <div class="two-col-layout" style="display: flex; flex-direction: column; gap: 20px;">
+          <div id="providersContainer" style="max-height: 600px; overflow-y: auto; width: 100%;">
+            <!-- Provider groups will be rendered here -->
+          </div>
+
+          <div style="display: flex; flex-direction: column; width: 100%;">
+            <div class="output-header">
+              <h3>Generated Config</h3>
+              <button id="copyBtn" class="secondary">Copy JSON</button>
+            </div>
+            <textarea id="configOutput" class="config-output" readonly></textarea>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script src="/opencode.js"></script>
+  </body>
+</html>
