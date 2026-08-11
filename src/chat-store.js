@@ -32,9 +32,38 @@ class ChatStore {
 
       CREATE INDEX IF NOT EXISTS idx_messages_chat_id_id ON messages(chat_id, id);
       CREATE INDEX IF NOT EXISTS idx_chats_updated_at ON chats(updated_at);
+
+      CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        google_id TEXT UNIQUE NOT NULL,
+        email TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'user',
+        created_at TEXT NOT NULL
+      );
     `);
     ensureColumn(this.db, 'messages', 'provider', 'TEXT');
     ensureColumn(this.db, 'messages', 'provider_model_id', 'TEXT');
+  }
+
+  getUserByGoogleId(googleId) {
+    return this.db
+      .prepare('SELECT id, google_id, email, role, created_at FROM users WHERE google_id = ?')
+      .get(googleId);
+  }
+
+  createUser({ googleId, email, role = 'user' }) {
+    const now = new Date().toISOString();
+    const result = this.db
+      .prepare('INSERT INTO users (google_id, email, role, created_at) VALUES (?, ?, ?, ?)')
+      .run(googleId, email, role, now);
+
+    return {
+      id: Number(result.lastInsertRowid),
+      google_id: googleId,
+      email,
+      role,
+      created_at: now
+    };
   }
 
   listChats({ limit = 100 } = {}) {

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Admin Settings</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="app-shell" style="grid-template-columns: 1fr;">
+      <section class="chat-panel">
+        <header class="chat-header">
+          <h1 class="chat-title" style="margin:0;">Admin Settings</h1>
+          <a href="/" class="secondary button" style="text-decoration:none; display:inline-flex; align-items:center; padding:0 14px;">Back</a>
+        </header>
+        <div class="messages">
+          <div id="status" class="status" style="margin-bottom: 12px; display: none;"></div>
+          <form id="settingsForm" style="display: grid; gap: 14px; max-width: 600px;">
+            <!-- Settings will be populated here -->
+          </form>
+          <div style="margin-top: 14px; max-width: 600px;">
+            <button id="saveBtn" type="button">Save Settings</button>
+          </div>
+        </div>
+      </section>
+    </main>
+    <script src="/settings.js"></script>
+  </body>
+</html>

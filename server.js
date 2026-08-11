@@ -1,3 +1,4 @@
+require("dotenv").config();
 const path = require('path');
 const fs = require('fs/promises');
 const { spawn } = require('child_process');
@@ -8,6 +9,8 @@ const { buildOpenRouterHeaders, buildOptionalBearerHeaders, createModelRegistry 
 const { ChatStore } = require('./src/chat-store');
 const { KeyPool, parseKeys, maskKey } = require('./src/key-pool');
 const { DebugLogger } = require('./src/debug-log');
+const { getGoogleAuthUrl, getGoogleUserFromCode } = require('./src/auth/google');
+const { readSettings, writeSettings } = require('./src/settings');
 const {
   responsesToChatCompletions,
   chatCompletionsToResponse,
@@ -209,12 +212,90 @@ app.disable('x-powered-by');
 app.use(cors({ origin: CORS_ORIGIN }));
 app.use(express.json({ limit: process.env.BODY_LIMIT || '50mb' }));
 app.use(express.urlencoded({ limit: process.env.BODY_LIMIT || '50mb', extended: true }));
+app.use(require('cookie-parser')());
+app.use(require('express-session')({
+  secret: process.env.SESSION_SECRET || 'a-very-secret-key-that-should-be-changed',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 24 * 60 * 60 * 1000 // 24 hours
+  }
+}));
+
 app.use(express.static(path.join(__dirname, 'public'), {
   extensions: ['html'],
   index: 'index.html',
 }));
 
 app.use('/g4f-site', g4fSiteAuth, asyncHandler(proxyG4fSite));
+
+app.get('/auth/google', (req, res) => {
+  res.redirect(getGoogleAuthUrl());
+});
+
+app.get('/auth/google/callback', asyncHandler(async (req, res) => {
+  const code = req.query.code;
+  if (!code) {
+    return res.status(400).send('No code provided');
+  }
+
+  const gUser = await getGoogleUserFromCode(code);
+  let user = chatStore.getUserByGoogleId(gUser.googleId);
+
+  if (!user) {
+    // If it's the first user, let's make them an admin by default
+    const allUsers = chatStore.db.prepare('SELECT COUNT(*) as count FROM users').get();
+    const role = allUsers.count === 0 ? 'admin' : 'user';
+
+    user = chatStore.createUser({
+      googleId: gUser.googleId,
+      email: gUser.email,
+      role,
+    });
+  }
+
+  req.session.user = {
+    id: user.id,
+    email: user.email,
+    role: user.role,
+  };
+
+  res.redirect('/');
+}));
+
+app.get('/auth/me', (req, res) => {
+  if (req.session.user) {
+    res.json({ loggedIn: true, user: req.session.user });
+  } else {
+    res.json({ loggedIn: false });
+  }
+});
+
+app.post('/auth/logout', (req, res) => {
+  req.session.destroy();
+  res.json({ success: true });
+});
+
+function requireAdmin(req, res, next) {
+  if (!req.session || !req.session.user || req.session.user.role !== 'admin') {
+    return res.status(403).json(openAiError('Forbidden: Admin access required', 'invalid_request_error', 403));
+  }
+  next();
+}
+
+app.get('/admin/settings', requireAdmin, asyncHandler(async (req, res) => {
+  const settings = await readSettings();
+  res.json({
+    object: 'settings',
+    data: settings
+  });
+}));
+
+app.post('/admin/settings', requireAdmin, asyncHandler(async (req, res) => {
+  await writeSettings(req.body);
+  res.json({ success: true });
+}));
 
 app.use((req, res, next) => {
   if (req.path === '/health') {

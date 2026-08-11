@@ -124,6 +124,32 @@ async function bootstrap() {
   }
 }
 
+async function checkAuth() {
+  try {
+    const res = await fetch('/auth/me');
+    const data = await res.json();
+    const authSection = document.getElementById('authSection');
+    const settingsLink = document.getElementById('settingsLink');
+    if (data.loggedIn) {
+      authSection.innerHTML = `
+        <span style="font-size: 12px; color: var(--muted); text-align: center; display: block;">Logged in as ${data.user.email}</span>
+        <button id="logoutBtn" class="secondary" style="margin-top: 8px; width: 100%;">Logout</button>
+      `;
+      document.getElementById('logoutBtn').addEventListener('click', async () => {
+        await fetch('/auth/logout', { method: 'POST' });
+        window.location.reload();
+      });
+      if (data.user.role === 'admin' && settingsLink) {
+        settingsLink.style.display = 'inline-grid';
+      }
+    }
+  } catch (err) {
+    console.error('Failed to check auth status', err);
+  }
+}
+
+document.addEventListener('DOMContentLoaded', checkAuth);
+
 async function api(path, options = {}) {
   const response = await fetch(path, {
     ...options,
