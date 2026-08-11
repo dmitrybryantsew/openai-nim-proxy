@@ -425,22 +425,121 @@ function appendLocalMessage(role, content, metadata = {}) {
   label.className = 'message-role';
   label.textContent = role;
 
+  let displayContent = content;
+  let thinkingContent = null;
+
+  const thinkMatch = content.match(/<think>([\s\S]*?)<\/think>/);
+  if (thinkMatch) {
+    thinkingContent = thinkMatch[1].trim();
+    displayContent = content.replace(/<think>[\s\S]*?<\/think>\n*/, '').trim();
+  }
+
   const body = document.createElement('div');
   body.className = 'message-content';
-  body.textContent = content;
+
+  if (thinkingContent) {
+    const details = document.createElement('details');
+    details.className = 'thinking-block';
+    const summary = document.createElement('summary');
+    summary.textContent = 'Thinking...';
+    const thinkBody = document.createElement('div');
+    thinkBody.textContent = thinkingContent;
+    details.append(summary, thinkBody);
+    body.appendChild(details);
+  }
+
+  const mainContent = document.createElement('div');
+  mainContent.className = 'main-content';
+  mainContent.textContent = displayContent;
+  body.appendChild(mainContent);
 
   wrapper.append(label, body);
 
   const footerText = formatMessageFooter(metadata);
-  if (footerText) {
+  const actions = document.createElement('div');
+  actions.className = 'message-actions';
+
+  const copyButton = document.createElement('button');
+  copyButton.textContent = 'Copy';
+  copyButton.className = 'action-btn secondary';
+  copyButton.addEventListener('click', () => {
+    navigator.clipboard.writeText(content).catch(() => {});
+  });
+  actions.appendChild(copyButton);
+
+  if (metadata.id) {
+    const deleteButton = document.createElement('button');
+    deleteButton.textContent = 'Delete';
+    deleteButton.className = 'action-btn secondary danger';
+    deleteButton.addEventListener('click', async () => {
+      try {
+        await api(`/api/chats/${state.activeChatId}/messages/${metadata.id}`, { method: 'DELETE' });
+        await openChat(state.activeChatId);
+      } catch (e) {
+        setStatus(`Delete failed: ${e.message}`);
+      }
+    });
+    actions.appendChild(deleteButton);
+
+    if (role === 'assistant') {
+      const regenButton = document.createElement('button');
+      regenButton.textContent = 'Regenerate';
+      regenButton.className = 'action-btn secondary';
+      regenButton.addEventListener('click', async () => {
+        try {
+          await api(`/api/chats/${state.activeChatId}/messages/${metadata.id}`, { method: 'DELETE' });
+          await generateMessage();
+        } catch (e) {
+          setStatus(`Regenerate failed: ${e.message}`);
+        }
+      });
+      actions.appendChild(regenButton);
+    }
+  }
+
+  if (footerText || actions.hasChildNodes()) {
     const footer = document.createElement('div');
     footer.className = 'message-footer';
-    footer.textContent = footerText;
+    if (footerText) {
+      const footerTextEl = document.createElement('span');
+      footerTextEl.textContent = footerText;
+      footer.appendChild(footerTextEl);
+    }
+    footer.appendChild(actions);
     wrapper.appendChild(footer);
   }
 
   elements.messages.appendChild(wrapper);
   scrollMessages();
+}
+
+async function generateMessage() {
+  if (state.busy) return;
+  state.busy = true;
+  elements.sendButton.disabled = true;
+
+  const model = elements.modelSelect.value;
+  appendLocalMessage('assistant', 'Thinking...');
+
+  try {
+    const data = await api(`/api/chats/${state.activeChatId}/generate`, {
+      method: 'POST',
+      body: JSON.stringify({
+        model,
+        ...state.requestSettings,
+      }),
+    });
+    renderMessages(data.data.messages || []);
+    await loadChats();
+    setStatus('Message regenerated.');
+  } catch (error) {
+    removeThinkingMessage();
+    appendLocalMessage('assistant', `Request failed: ${error.message}`);
+    setStatus(`Generate failed: ${error.message}`);
+  } finally {
+    state.busy = false;
+    elements.sendButton.disabled = false;
+  }
 }
 
 function formatMessageFooter(message) {
