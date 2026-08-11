@@ -414,6 +414,53 @@ app.delete('/api/chats/:id', (req, res) => {
   res.status(204).end();
 });
 
+app.delete('/api/chats/:id/messages/:messageId', (req, res) => {
+  if (!chatStore.deleteMessage(Number(req.params.id), Number(req.params.messageId))) {
+    return res.status(404).json(openAiError('Message not found', 'invalid_request_error', 404));
+  }
+
+  res.status(204).end();
+});
+
+app.post('/api/chats/:id/generate', asyncHandler(async (req, res) => {
+  const chatId = Number(req.params.id);
+  const chat = chatStore.getChat(chatId);
+  if (!chat) {
+    return res.status(404).json(openAiError('Chat not found', 'invalid_request_error', 404));
+  }
+
+  const modelId = req.body.model || chat.model;
+  if (!modelId) {
+    return res.status(400).json(openAiError('model is required', 'invalid_request_error', 400));
+  }
+
+  const resolvedModel = await registry.resolveModel(modelId);
+  const messages = chat.messages.map((message) => ({ role: message.role, content: message.content }));
+
+  const { completion, model } = await createChatCompletion({
+    ...req.body,
+    model: resolvedModel.id,
+    messages,
+    stream: false,
+  }, resolvedModel);
+  const assistantContent = completion.choices?.[0]?.message?.content || '';
+
+  chatStore.addMessage({
+    chatId,
+    role: 'assistant',
+    content: assistantContent,
+    model: model.id,
+    provider: model.provider,
+    providerModelId: model.provider_model_id,
+    raw: completion,
+  });
+
+  res.json({
+    object: 'chat',
+    data: chatStore.getChat(chatId),
+  });
+}));
+
 app.post('/api/chats/:id/messages', asyncHandler(async (req, res) => {
   const chatId = Number(req.params.id);
   const chat = chatStore.getChat(chatId);
