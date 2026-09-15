@@ -29,6 +29,9 @@ function createModelRegistry(options) {
     tokenrouterApiKey: options.tokenrouterApiKey,
     inferxApiBase: trimTrailingSlash(options.inferxApiBase),
     inferxApiKey: options.inferxApiKey,
+    baiApiBase: trimTrailingSlash(options.baiApiBase),
+    baiApiKey: options.baiApiKey,
+    baiFreeModels: options.baiFreeModels || [],
     openRouterIncludeMultimodalOutput: options.openRouterIncludeMultimodalOutput,
     openRouterAppUrl: options.openRouterAppUrl,
     openRouterAppTitle: options.openRouterAppTitle,
@@ -46,7 +49,7 @@ function createModelRegistry(options) {
   }
 
   async function refreshModels() {
-    const [nimModels, chutesModels, ollamaModels, g4fModels, openRouterModels, tokenrouterModels, inferxModels] = await Promise.all([
+    const [nimModels, chutesModels, ollamaModels, g4fModels, openRouterModels, tokenrouterModels, inferxModels, baiModels] = await Promise.all([
       fetchNimModels(config).catch(() => []),
       fetchChutesModels(config).catch(() => []),
       fetchOllamaModels(config).catch(() => []),
@@ -54,6 +57,7 @@ function createModelRegistry(options) {
       fetchOpenRouterModels(config).catch(() => []),
       fetchTokenRouterModels(config).catch(() => []),
       fetchInferxModels(config).catch(() => []),
+      fetchBaiModels(config).catch(() => []),
     ]);
 
     const models = uniqueById([
@@ -65,6 +69,7 @@ function createModelRegistry(options) {
       ...openRouterModels,
       ...tokenrouterModels,
       ...inferxModels,
+      ...baiModels,
     ]).sort((a, b) => {
       if (a.provider !== b.provider) {
         return a.provider.localeCompare(b.provider);
@@ -123,7 +128,7 @@ function createModelRegistry(options) {
   function updateProviderApiKey(provider, apiKey) {
     const configKey = `${provider}ApiKey`;
     const known = new Set([
-      'nim', 'chutes', 'ollama', 'g4f', 'openrouter', 'tokenrouter', 'inferx',
+      'nim', 'chutes', 'ollama', 'g4f', 'openrouter', 'tokenrouter', 'inferx', 'bai',
     ]);
     if (!known.has(provider)) {
       throw new Error(`Unknown provider "${provider}"`);
@@ -465,6 +470,52 @@ async function fetchInferxModels(config) {
     }));
 }
 
+// B.AI does not expose pricing in /v1/models, so free/promo models are
+// declared explicitly via BAI_FREE_MODELS (comma-separated provider IDs).
+async function fetchBaiModels(config) {
+  if (!config.baiApiKey) {
+    return [];
+  }
+
+  const response = await axios.get(`${config.baiApiBase}/models`, {
+    headers: buildOptionalBearerHeaders(config.baiApiKey, false),
+    timeout: config.requestTimeoutMs,
+    validateStatus: () => true,
+  });
+
+  if (response.status < 200 || response.status >= 300) {
+    return [];
+  }
+
+  const freeModels = new Set(
+    (config.baiFreeModels || []).map((id) => String(id).trim()).filter(Boolean),
+  );
+
+  return (response.data?.data || [])
+    .filter((model) => model?.id)
+    .map((model) => {
+      const free = freeModels.has(model.id);
+      return {
+        id: `bai:${model.id}`,
+        object: 'model',
+        created: normalizeModelCreated(model.created),
+        owned_by: model.owned_by || 'b.ai',
+        provider: 'bai',
+        provider_model_id: model.id,
+        name: model.name || model.id,
+        free: free ? true : null,
+        // B.AI credits: 1 USD = 1,000,000 Credits per 1M tokens, so a
+        // zero-price promo model maps to OpenAI-style zero pricing.
+        pricing: free
+          ? { prompt: '0', completion: '0' }
+          : model.pricing || null,
+        context_length: model.context_length || null,
+        architecture: model.architecture || null,
+        source: free ? 'bai-promo' : 'bai',
+      };
+    });
+}
+
 function isOpenRouterFree(model) {
   const pricing = model.pricing || {};
   const prompt = Number(pricing.prompt);
@@ -533,6 +584,13 @@ function parseDirectModel(publicModelId) {
     const providerModelId = publicModelId.slice('inferx:'.length);
     if (providerModelId) {
       return directModel('inferx', providerModelId, publicModelId);
+    }
+  }
+
+  if (publicModelId.startsWith('bai:')) {
+    const providerModelId = publicModelId.slice('bai:'.length);
+    if (providerModelId) {
+      return directModel('bai', providerModelId, publicModelId);
     }
   }
 

@@ -125,6 +125,10 @@ const providers = {
     includePaid: parseBoolean(process.env.OPENROUTER_INCLUDE_PAID, false),
     includeMultimodalOutput: parseBoolean(process.env.OPENROUTER_INCLUDE_MULTIMODAL_OUTPUT, true),
   },
+  bai: {
+    apiBase: trimTrailingSlash(process.env.BAI_API_BASE || 'https://api.b.ai/v1'),
+    apiKey: process.env.BAI_API_KEY,
+  },
 };
 
 // --- Key pools with round-robin + exponential cooldown ---
@@ -150,6 +154,7 @@ const keyPools = {
   openrouter: buildKeyPool('openrouter', process.env.OPENROUTER_API_KEYS, process.env.OPENROUTER_API_KEY),
   tokenrouter: buildKeyPool('tokenrouter', process.env.TOKENROUTER_API_KEYS, process.env.TOKENROUTER_API_KEY),
   inferx: buildKeyPool('inferx', process.env.INFERX_API_KEYS, process.env.INFERX_API_KEY),
+  bai: buildKeyPool('bai', process.env.BAI_API_KEYS, process.env.BAI_API_KEY),
   // ollama and g4f typically don't need key rotation (local/no-auth), but support it if configured
   ollama: buildKeyPool('ollama', process.env.OLLAMA_API_KEYS, process.env.OLLAMA_API_KEY),
   g4f: buildKeyPool('g4f', process.env.G4F_API_KEYS, process.env.G4F_API_KEY),
@@ -189,6 +194,9 @@ const registry = createModelRegistry({
   tokenrouterApiKey: providers.tokenrouter.apiKey || firstKey(keyPools.tokenrouter),
   inferxApiBase: providers.inferx.apiBase,
   inferxApiKey: providers.inferx.apiKey || firstKey(keyPools.inferx),
+  baiApiBase: providers.bai.apiBase,
+  baiApiKey: providers.bai.apiKey || firstKey(keyPools.bai),
+  baiFreeModels: parseCsv(process.env.BAI_FREE_MODELS || 'qwen3.8-flash,hy3,mimo-v2.5'),
   ollamaApiBase: providers.ollama.apiBase,
   ollamaApiKey: providers.ollama.apiKey || firstKey(keyPools.ollama),
   ollamaEnabled: providers.ollama.enabled,
@@ -306,6 +314,7 @@ const KEY_MANAGED_PROVIDERS = {
   openrouter: { envPrefix: 'OPENROUTER', label: 'OpenRouter' },
   tokenrouter: { envPrefix: 'TOKENROUTER', label: 'TokenRouter' },
   inferx: { envPrefix: 'INFERX', label: 'InferX' },
+  bai: { envPrefix: 'BAI', label: 'B.AI' },
   ollama: { envPrefix: 'OLLAMA', label: 'Ollama' },
   g4f: { envPrefix: 'G4F', label: 'GPT4Free' },
 };
@@ -493,6 +502,10 @@ app.get('/health', (_req, res) => {
         api_key_configured: Boolean(providers.openrouter.apiKey),
         include_paid: providers.openrouter.includePaid,
         include_multimodal_output: providers.openrouter.includeMultimodalOutput,
+      },
+      bai: {
+        api_base: providers.bai.apiBase,
+        api_key_configured: Boolean(providers.bai.apiKey),
       },
     },
     proxy_api_key_configured: Boolean(PROXY_API_KEY),
@@ -2164,10 +2177,19 @@ function buildProviderHeaders(provider, stream, keyEntry) {
   const openRouterKey = keyEntry ? keyEntry.key : providers.openrouter.apiKey;
   const tokenrouterKey = keyEntry ? keyEntry.key : providers.tokenrouter.apiKey;
   const inferxKey = keyEntry ? keyEntry.key : providers.inferx.apiKey;
+  const baiKey = keyEntry ? keyEntry.key : providers.bai.apiKey;
 
   if (provider === 'nim') {
     return {
       Authorization: `Bearer ${nimKey}`,
+      'Content-Type': 'application/json',
+      Accept: stream ? 'text/event-stream' : 'application/json',
+    };
+  }
+
+  if (provider === 'bai') {
+    return {
+      Authorization: `Bearer ${baiKey}`,
       'Content-Type': 'application/json',
       Accept: stream ? 'text/event-stream' : 'application/json',
     };
