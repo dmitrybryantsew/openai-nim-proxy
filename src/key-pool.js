@@ -155,6 +155,37 @@ class KeyPool {
   }
 
   /**
+   * Hot-replace the key list (e.g. from the admin keys UI).
+   * Stats for keys that survive the update are preserved so an
+   * in-flight cooldown or failure count is not lost; new keys start clean.
+   * @param {string[]} keys - New non-empty key list
+   */
+  reset(keys) {
+    if (!Array.isArray(keys) || keys.length === 0) {
+      throw new Error(`KeyPool.reset: at least one key is required (provider=${this.provider})`);
+    }
+
+    const byKey = new Map(this.entries.map((e) => [e.key, e]));
+    const newEntries = keys.map((k, i) => {
+      const existing = byKey.get(k);
+      if (existing) return existing;
+      return new KeyEntry(k, `${this.provider}-key${keys.length > 1 ? '-' + (i + 1) : ''}`);
+    });
+
+    // Keep the round-robin index valid for the new list.
+    this.rrIndex = this.rrIndex % newEntries.length;
+    this.entries = newEntries;
+  }
+
+  /**
+   * Remove all keys, disabling the pool (e.g. all keys deleted in the UI).
+   */
+  clear() {
+    this.entries = [];
+    this.rrIndex = 0;
+  }
+
+  /**
    * Get a status snapshot for the debug page.
    * @returns {object}
    */

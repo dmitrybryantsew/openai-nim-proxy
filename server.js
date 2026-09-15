@@ -297,6 +297,155 @@ app.post('/admin/settings', requireAdmin, asyncHandler(async (req, res) => {
   res.json({ success: true });
 }));
 
+// --- Provider key management (admin keys UI) ---
+// Providers that authenticate with a single bearer key and support
+// comma-separated multi-key rotation via *_API_KEYS.
+const KEY_MANAGED_PROVIDERS = {
+  nim: { envPrefix: 'NIM', label: 'NVIDIA NIM' },
+  chutes: { envPrefix: 'CHUTES', label: 'Chutes' },
+  openrouter: { envPrefix: 'OPENROUTER', label: 'OpenRouter' },
+  tokenrouter: { envPrefix: 'TOKENROUTER', label: 'TokenRouter' },
+  inferx: { envPrefix: 'INFERX', label: 'InferX' },
+  ollama: { envPrefix: 'OLLAMA', label: 'Ollama' },
+  g4f: { envPrefix: 'G4F', label: 'GPT4Free' },
+};
+
+app.get('/admin/keys', requireAdmin, (req, res) => {
+  const data = {};
+  for (const [name, meta] of Object.entries(KEY_MANAGED_PROVIDERS)) {
+    const pool = keyPools[name];
+    const provider = providers[name];
+    data[name] = {
+      label: meta.label,
+      api_base: provider.apiBase,
+      key_configured: Boolean(provider.apiKey || (pool && pool.entries.length > 0)),
+      pool: pool
+        ? {
+            total_keys: pool.entries.length,
+            available: pool.entries.filter((e) => !e.isCooling).length,
+            cooling: pool.entries.filter((e) => e.isCooling).length,
+          }
+        : { total_keys: 0, available: 0, cooling: 0 },
+      keys: pool
+        ? pool.entries.map((e, i) => ({
+            index: i,
+            label: e.label,
+            masked: maskKey(e.key),
+            available: !e.isCooling,
+            cooldown_remaining_ms: e.cooldownRemainingMs,
+            consecutive_failures: e.consecutiveFailures,
+            total_requests: e.totalRequests,
+            total_failures: e.totalFailures,
+          }))
+        : [],
+    };
+  }
+  res.json({
+    object: 'admin.keys',
+    data,
+  });
+});
+
+app.post('/admin/keys', requireAdmin, asyncHandler(async (req, res) => {
+  const { provider: providerName, keys, action } = req.body || {};
+
+  if (!Object.prototype.hasOwnProperty.call(KEY_MANAGED_PROVIDERS, providerName)) {
+    return res.status(400).json(openAiError(`Unknown provider "${providerName}". Managed providers: ${Object.keys(KEY_MANAGED_PROVIDERS).join(', ')}`, 'invalid_request_error', 400));
+  }
+
+  const pool = keyPools[providerName];
+  let cleaned;
+
+  if (action === 'add') {
+    // Additive: append new raw keys to the existing set.
+    if (!Array.isArray(keys) || keys.length === 0) {
+      return res.status(400).json(openAiError('keys must be a non-empty array for action "add"', 'invalid_request_error', 400));
+    }
+    const incoming = keys.map((k) => String(k || '').trim()).filter(Boolean);
+    if (incoming.length === 0) {
+      return res.status(400).json(openAiError('keys contains no non-empty values', 'invalid_request_error', 400));
+    }
+    const existing = pool ? pool.entries.map((e) => e.key) : [];
+    const existingSingle = providers[providerName].apiKey && (!pool || pool.entries.length === 0)
+      ? [providers[providerName].apiKey]
+      : [];
+    cleaned = [...new Set([...existing, ...existingSingle, ...incoming])];
+  } else if (action === 'remove') {
+    // Remove by index (masked values can collide for short keys, indexes are
+    // unambiguous and the browser never sees raw keys).
+    const index = Number(req.body.index);
+    if (!Number.isInteger(index) || index < 0 || !pool || index >= pool.entries.length) {
+      return res.status(400).json(openAiError('index must be a valid key index for action "remove"', 'invalid_request_error', 400));
+    }
+    cleaned = pool.entries.filter((_, i) => i !== index).map((e) => e.key);
+  } else if (!action) {
+    // Replace: full list of raw keys, or empty array to remove all keys.
+    if (!Array.isArray(keys)) {
+      return res.status(400).json(openAiError('keys must be an array of strings (empty array removes all keys)', 'invalid_request_error', 400));
+    }
+    cleaned = [...new Set(keys.map((k) => String(k || '').trim()).filter(Boolean))];
+  } else {
+    return res.status(400).json(openAiError(`Unknown action "${action}". Use "add", "remove", or omit for replace.`, 'invalid_request_error', 400));
+  }
+
+  // Reconcile singular config: if the singular key survived as first key,
+  // keep it in sync; otherwise null it out so no stale single key wins on
+  // restart (pool takes priority over singular in buildKeyPool).
+  const meta = KEY_MANAGED_PROVIDERS[providerName];
+  const updates = {};
+
+  if (cleaned.length === 0) {
+    // Remove all keys: clear the plural form and the singular fallback so a
+    // stale single key doesn't silently resurrect on next restart.
+    updates[`${meta.envPrefix}_API_KEYS`] = null;
+    updates[`${meta.envPrefix}_API_KEY`] = null;
+  } else if (cleaned.length === 1) {
+    updates[`${meta.envPrefix}_API_KEYS`] = null;
+    updates[`${meta.envPrefix}_API_KEY`] = cleaned[0];
+  } else {
+    updates[`${meta.envPrefix}_API_KEYS`] = cleaned.join(',');
+    updates[`${meta.envPrefix}_API_KEY`] = null;
+  }
+
+  await writeSettings(updates);
+
+  // Hot-apply to the in-memory pool. Chat completions pick keys from the
+  // pool at request time (server.js pool.pick()), so this takes effect
+  // immediately without a restart.
+  if (cleaned.length === 0) {
+    if (keyPools[providerName]) keyPools[providerName].clear();
+    providers[providerName].apiKey = undefined;
+    registry.updateProviderApiKey(providerName, undefined);
+  } else {
+    if (!keyPools[providerName]) {
+      keyPools[providerName] = new KeyPool({
+        keys: cleaned,
+        provider: providerName,
+        baseCooldownMs: KEY_COOLDOWN_BASE_MS,
+        maxCooldownMs: KEY_COOLDOWN_MAX_MS,
+      });
+    } else {
+      keyPools[providerName].reset(cleaned);
+    }
+    // Keep the singular config key in sync so code paths that read
+    // providers[x].apiKey directly (TTS, image gen, model listing fallback)
+    // also see the first key of the pool.
+    providers[providerName].apiKey = keyPools[providerName].entries[0].key;
+    registry.updateProviderApiKey(providerName, keyPools[providerName].entries[0].key);
+  }
+
+  const updatedPool = keyPools[providerName];
+  res.json({
+    success: true,
+    provider: providerName,
+    action: action || 'replace',
+    total_keys: updatedPool ? updatedPool.entries.length : 0,
+    message: cleaned.length === 0
+      ? 'All keys removed. Add a key to enable this provider.'
+      : `Updated ${cleaned.length} key${cleaned.length > 1 ? 's' : ''}. Rotation is active.`,
+  });
+}));
+
 app.use((req, res, next) => {
   if (req.path === '/health') {
     return next();
@@ -972,8 +1121,9 @@ async function requestChatCompletion(body, stream, resolvedModel) {
   const upstream = getProviderConfig(model.provider);
   const pool = keyPools[model.provider];
 
-  // If no key pool for this provider, use the original single-key path
-  if (!pool) {
+  // If no key pool (or an emptied pool from the keys UI) for this provider,
+  // use the original single-key path
+  if (!pool || pool.entries.length === 0) {
     const isKimi = model.provider === 'tokenrouter' && model.provider_model_id.includes('kimi');
     const singleKeyMaxAttempts = isKimi ? 20 : 1;
     let response;
@@ -1438,7 +1588,7 @@ function getProviderConfig(provider) {
     return config;
   }
 
-  if (!config.apiKey && !keyPools[provider]) {
+  if (!config.apiKey && !(keyPools[provider] && keyPools[provider].entries.length > 0)) {
     throw Object.assign(new Error(`${provider.toUpperCase()}_API_KEY (or ${provider.toUpperCase()}_API_KEYS) is required for chat completions and tests`), { status: 500 });
   }
 

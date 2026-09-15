@@ -130,6 +130,7 @@ async function checkAuth() {
     const data = await res.json();
     const authSection = document.getElementById('authSection');
     const settingsLink = document.getElementById('settingsLink');
+    const keysLink = document.getElementById('keysLink');
     if (data.loggedIn) {
       authSection.innerHTML = `
         <span style="font-size: 12px; color: var(--muted); text-align: center; display: block;">Logged in as ${data.user.email}</span>
@@ -139,8 +140,9 @@ async function checkAuth() {
         await fetch('/auth/logout', { method: 'POST' });
         window.location.reload();
       });
-      if (data.user.role === 'admin' && settingsLink) {
-        settingsLink.style.display = 'inline-grid';
+      if (data.user.role === 'admin') {
+        if (settingsLink) settingsLink.style.display = 'inline-grid';
+        if (keysLink) keysLink.style.display = 'inline-grid';
       }
     }
   } catch (err) {

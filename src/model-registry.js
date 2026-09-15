@@ -113,11 +113,32 @@ function createModelRegistry(options) {
     };
   }
 
+  /**
+   * Update a provider's API key in the live config (admin keys UI).
+   * Invalidates the cached model list so the next /v1/models call re-fetches
+   * with the new key instead of serving the old (possibly empty) result.
+   * @param {string} provider - Provider name ('nim', 'chutes', etc.)
+   * @param {string|null} apiKey - New key, or null/undefined to remove
+   */
+  function updateProviderApiKey(provider, apiKey) {
+    const configKey = `${provider}ApiKey`;
+    const known = new Set([
+      'nim', 'chutes', 'ollama', 'g4f', 'openrouter', 'tokenrouter', 'inferx',
+    ]);
+    if (!known.has(provider)) {
+      throw new Error(`Unknown provider "${provider}"`);
+    }
+
+    config[configKey] = apiKey || undefined;
+    memoryCache = { updated_at: null, models: [] };
+  }
+
   return {
     listModels,
     refreshModels,
     resolveModel,
     getCacheInfo,
+    updateProviderApiKey,
   };
 }
 

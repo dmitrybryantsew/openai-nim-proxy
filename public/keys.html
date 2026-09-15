@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Provider Keys</title>
+    <link rel="stylesheet" href="/styles.css">
+    <style>
+      .keys-shell { max-width: 1100px; margin: 0 auto; padding: 1.5rem; }
+      .keys-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+      .keys-header h1 { margin: 0; font-size: 1.4rem; }
+      .keys-header p { margin: 0; color: var(--text-dim, #888); font-size: 0.85rem; }
+      .keys-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 1rem; }
+      .key-card { border: 1px solid var(--border, #333); border-radius: 8px; padding: 1rem; display: flex; flex-direction: column; gap: 0.6rem; }
+      .key-card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; }
+      .key-card-head h2 { margin: 0; font-size: 1.05rem; }
+      .key-card-head .api-base { font-size: 0.72rem; color: var(--text-dim, #888); font-family: monospace; word-break: break-all; }
+      .pool-stats { display: flex; gap: 1rem; font-size: 0.8rem; color: var(--text-dim, #888); flex-wrap: wrap; }
+      .pool-stats .ok { color: #4ade80; }
+      .pool-stats .warn { color: #fbbf24; }
+      .key-list { display: flex; flex-direction: column; gap: 0.25rem; }
+      .key-item { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; font-size: 0.8rem; border: 1px dotted var(--border, #444); border-radius: 4px; padding: 0.25rem 0.4rem; }
+      .key-item .masked { font-family: monospace; }
+      .key-item .meta { font-size: 0.72rem; color: var(--text-dim, #888); font-family: monospace; white-space: nowrap; }
+      .key-item .remove-btn { background: none; border: none; color: #f87171; cursor: pointer; font-size: 1rem; padding: 0 0.2rem; line-height: 1; }
+      .key-item .remove-btn:hover { color: #ef4444; }
+      .key-add-row { display: flex; gap: 0.4rem; }
+      .key-add-row input { flex: 1; min-width: 0; font-family: monospace; font-size: 0.8rem; }
+      .key-card .hint { font-size: 0.72rem; color: var(--text-dim, #888); }
+      .keys-status { margin: 1rem 0; }
+      .empty { color: var(--text-dim, #888); font-style: italic; }
+      .no-access { max-width: 480px; margin: 4rem auto; text-align: center; display: grid; gap: 1rem; }
+    </style>
+  </head>
+  <body>
+    <main class="keys-shell">
+      <header class="keys-header">
+        <div>
+          <h1>Provider Keys</h1>
+          <p>Add, remove, and rotate API keys per provider. Changes apply immediately and persist to .env.</p>
+        </div>
+        <nav>
+          <a href="/settings.html" class="nav-link">Settings</a>
+          <a href="/tools.html" class="nav-link">Tools</a>
+        </nav>
+      </header>
+
+      <div id="status" class="status keys-status" style="display:none;"></div>
+      <div id="keysGrid" class="keys-grid">
+        <div class="empty">Loading…</div>
+      </div>
+    </main>
+
+    <script src="/keys.js"></script>
+  </body>
+</html>
