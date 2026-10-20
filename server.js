@@ -8,6 +8,7 @@ const axios = require('axios');
 const { buildOpenRouterHeaders, buildOptionalBearerHeaders, createModelRegistry } = require('./src/model-registry');
 const { ChatStore } = require('./src/chat-store');
 const { CardStore } = require('./src/card-store');
+const { NoteStore } = require('./src/note-store');
 const { KeyPool, parseKeys, maskKey } = require('./src/key-pool');
 const { DebugLogger } = require('./src/debug-log');
 const { getGoogleAuthUrl, getGoogleUserFromCode } = require('./src/auth/google');
@@ -217,6 +218,7 @@ const registry = createModelRegistry({
 });
 const chatStore = new ChatStore(CHAT_DB_FILE);
 const cardStore = new CardStore(process.env.CARD_DB_FILE || CHAT_DB_FILE);
+const noteStore = new NoteStore(process.env.NOTE_DB_FILE || CHAT_DB_FILE);
 
 app.disable('x-powered-by');
 app.use(cors({ origin: CORS_ORIGIN }));
@@ -709,6 +711,50 @@ app.post('/api/cards/review', asyncHandler(async (req, res) => {
 app.delete('/api/cards/decks/:id', asyncHandler(async (req, res) => {
   cardStore.deleteDeck(req.params.id);
   res.json({ object: 'card.deck.delete', id: req.params.id, deleted: true });
+}));
+
+// --- Vault Note Sync Routes ---
+app.post('/api/notes/manifest', asyncHandler(async (req, res) => {
+  const result = noteStore.computeDelta({
+    deviceRole: req.body.deviceRole || 'pc',
+    files: req.body.files || [],
+    userId: req.session?.user?.id || null,
+  });
+  res.json({ object: 'note.manifest', data: result });
+}));
+
+app.post('/api/notes/push', asyncHandler(async (req, res) => {
+  const result = noteStore.upsertNotes({
+    notes: req.body.notes || [],
+    deviceRole: req.body.deviceRole || 'pc',
+    userId: req.session?.user?.id || null,
+  });
+  res.json({ object: 'note.push', data: result });
+}));
+
+app.post('/api/notes/pull', asyncHandler(async (req, res) => {
+  const paths = req.body.paths || [];
+  const notes = noteStore.getNotesByPaths({
+    paths,
+    userId: req.session?.user?.id || null,
+  });
+  res.json({ object: 'note.pull', data: { notes } });
+}));
+
+app.get('/api/notes/stats', asyncHandler(async (req, res) => {
+  const stats = noteStore.getStats(req.session?.user?.id || null);
+  res.json({ object: 'note.stats', data: stats });
+}));
+
+app.get('/api/notes/list', asyncHandler(async (req, res) => {
+  const limit = Math.min(Number(req.query.limit || 100), 500);
+  const offset = Number(req.query.offset || 0);
+  const notes = noteStore.listNotes({
+    limit,
+    offset,
+    userId: req.session?.user?.id || null,
+  });
+  res.json({ object: 'note.list', data: notes });
 }));
 
 app.post('/api/chats/:id/generate', asyncHandler(async (req, res) => {
