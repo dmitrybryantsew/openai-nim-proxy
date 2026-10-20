@@ -3,3 +3,4 @@ node_modules/
 data/
 .smoke.*.log
 npm-debug.log
+.workbuddy-ai/

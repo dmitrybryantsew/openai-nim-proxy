@@ -1,6 +1,6 @@
 # openai-nim-proxy
 
-OpenAI-compatible proxy for NVIDIA NIM, Chutes, Ollama, GPT4Free sidecar, and OpenRouter models.
+OpenAI-compatible proxy for NVIDIA NIM, Chutes, Ollama, GPT4Free sidecar, OpenRouter, TokenRouter, InferX, and B.AI models.
 
 The project started as a NVIDIA NIM proxy, but it now behaves more like an OpenAI-compatible LLM gateway. A future repo/service rename to `openai-llm-gateway` would better describe the current scope without changing the API contract.
 
@@ -11,8 +11,16 @@ The proxy keeps OpenAI-style endpoints, but it does not fake OpenAI model aliase
 - `ollama:<ollama-model-name>`
 - `g4f:<gpt4free-model-name>`
 - `openrouter:<openrouter-model-id>`
+- `tokenrouter:<tokenrouter-model-id>`
+- `inferx:<inferx-model-id>`
+- `bai:<bai-model-id>`
 
 Example: `openrouter:nvidia/nemotron-3-ultra-550b-a55b:free`.
+
+There are eight providers wired up. The authoritative list lives in
+`src/model-registry.js` (`'nim', 'chutes', 'ollama', 'g4f', 'openrouter',
+'tokenrouter', 'inferx', 'bai'`); if you add one, update both that list and this
+README in the same commit — the two have drifted before.
 
 ## Model registry
 
@@ -25,6 +33,9 @@ Sources:
 - Ollama: `GET {OLLAMA_API_BASE}/models`, when `OLLAMA_ENABLED=true`.
 - GPT4Free sidecar: `GET {G4F_API_BASE}/models`, when `G4F_ENABLED=true`. If the sidecar does not return models, `G4F_MODELS` is used as a fallback list.
 - OpenRouter: `GET {OPENROUTER_API_BASE}/models`. By default only free text-only-output models are exposed.
+- TokenRouter: `GET {TOKENROUTER_API_BASE}/models`, when `TOKENROUTER_API_KEY` is configured.
+- InferX: `GET {INFERX_API_BASE}/models`, when `INFERX_API_KEY` is configured. Sends `X-Tenant-Id` from `INFERX_TENANT_ID`.
+- B.AI: `GET {BAI_API_BASE}/models`, when `BAI_API_KEY` is configured. B.AI exposes no pricing metadata, so promo models are declared explicitly in `BAI_FREE_MODELS`.
 
 OpenRouter free filtering uses `:free` model IDs and zero prompt/completion pricing. NVIDIA's model list does not expose comparable free-pricing metadata, so NIM models are treated as models available to the configured NVIDIA key.
 
@@ -107,6 +118,19 @@ http://localhost:3000/tools.html
 ```
 
 It uses the same `PROXY_API_KEY`, checks Kokoro/KittenTTS/Piper readiness, generates test audio, and reports latency, bytes, and characters per second.
+
+All built-in pages:
+
+| Page | Purpose |
+| --- | --- |
+| `/` | Chat UI (SQLite-backed, saved in `data/chats.sqlite`) |
+| `/tools.html` | Index of every page below |
+| `/tts.html` | TTS benchmark |
+| `/g4f.html` | GPT4Free sidecar status, chat and image tests |
+| `/debug.html` | Key pool health and request logs |
+| `/keys.html` | Provider key management (admin, hot-reload) |
+| `/opencode.html` | Generates an OpenCode config pointing at this proxy |
+| `/settings.html` | Admin settings |
 
 Set at least:
 
@@ -348,6 +372,64 @@ curl -X POST http://localhost:3000/admin/models/test \
   -d '{"provider":"openrouter","limit":5}'
 ```
 
+## Responses API (Codex CLI)
+
+`POST /v1/responses` is the OpenAI Responses API endpoint. Codex CLI 0.136+ dropped
+`wire_api=chat` and only speaks `/v1/responses`, so this endpoint is what lets Codex use
+the proxy.
+
+```bash
+curl http://localhost:3000/v1/responses \
+  -H "Authorization: Bearer $PROXY_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"openrouter:nvidia/nemotron-3-ultra-550b-a55b:free","input":"Say hello"}'
+```
+
+Implementation notes:
+
+- Built-in tools that Codex always sends (`web_search`, `file_search`) are stripped
+  upstream instead of rejecting the whole request. Function tools pass through.
+- Multi-turn continuity uses `previous_response_id`. State is in memory only, with a TTL
+  (`RESPONSE_STATE_TTL_MS`) and a size cap (`RESPONSE_STATE_MAX`), so a restart loses it —
+  Codex resends full input on the next call.
+- See `src/responses.js`.
+
+## Authentication
+
+`PROXY_API_KEY` gates the API, but it is **not** true that every endpoint except
+`/health` requires it. These are registered before the gate and are reachable without a
+Bearer header:
+
+| Path | Protection |
+| --- | --- |
+| `/health` | none |
+| `/auth/google`, `/auth/google/callback`, `/auth/me`, `/auth/logout` | none (Google OAuth flow) |
+| `/g4f-site/*` | its own check: `?key=<PROXY_API_KEY>` once, then an httpOnly cookie |
+| `/admin/*` | `requireAdmin` — Google session with an admin role |
+
+Everything else needs `Authorization: Bearer <PROXY_API_KEY>`.
+
+`/g4f-site` is a real reverse proxy: it forwards method, path, body and
+(blocklist-filtered) headers to `G4F_WEB_URL`, rewrites HTML responses and re-maps
+cookies. The upstream **host** comes from env only — no endpoint in this service accepts
+a caller-supplied URL, so it cannot be used as an open proxy.
+
+## Key rotation and debug logging
+
+Each provider accepts a comma-separated `*_API_KEYS` list (plural) that takes priority
+over the singular `*_API_KEY`. Keys are used round-robin; a `429`/`403` puts a key in
+cooldown starting at `KEY_COOLDOWN_BASE_MS` and doubling per retry, capped at
+`KEY_COOLDOWN_MAX_MS`, after which it is retested automatically.
+
+Inspect live state at `/debug.html`, or via:
+
+- `GET /admin/debug/key-pools` — per-key health and cooldowns.
+- `GET /admin/debug/status` — summary.
+- `GET /admin/debug/logs` — recent request/response entries (see `DEBUG_LOG_*` env vars).
+
+Provider keys can also be managed at runtime from `/keys.html` (`GET`/`POST /admin/keys`,
+admin only), which hot-reloads the pools without a restart.
+
 ## Docker
 
 ```bash
@@ -406,17 +488,50 @@ BASE_URL=http://your-server:3000 \
   bash scripts/smoke-remote.sh
 ```
 
+### Shared VPS note
+
+This service is designed to run on its own port and mind its own business. On the
+current VPS it listens on `3000` and is reached **directly**, not through the host's
+TLS front-end.
+
+Port `443` on the public hostname is already owned by another service. Do not add a
+site block, reverse-proxy rule, or path route for this app on that hostname — the
+gateway does not need one, and an edit there can take down unrelated services that
+have nothing to do with this repo.
+
+If you ever want the gateway behind TLS on `443`, use a **separate hostname** with its
+own DNS record and its own certificate. Never reuse the existing one.
+
+Also worth knowing before you change anything:
+
+- The systemd unit only manages `openai-nim-proxy`. Restarting, enabling, or disabling
+  it does not affect other services on the box.
+- `scripts/install-vps.sh` writes to `/opt/openai-nim-proxy` and installs Node from
+  NodeSource if missing. It does not install or configure a web server, and it must not
+  be pointed at an existing web root.
+- `scripts/cleanup-tts-vps.sh` and `scripts/cleanup-g4f-vps.sh` can remove Docker. On a
+  shared box, run them with `REMOVE_DOCKER_PACKAGE=false` (default) unless you have
+  confirmed nothing else uses Docker.
+
 ## Environment
 
 | Name | Default | Notes |
 | --- | --- | --- |
 | `PORT` | `3000` | HTTP port. |
-| `PROXY_API_KEY` | none | Required for every endpoint except `/health`. |
+| `PROXY_API_KEY` | none | Required for the API and admin routes. Does not gate `/health`, `/auth/*`, or `/g4f-site/*` — see [Authentication](#authentication). |
 | `CORS_ORIGIN` | `*` | Restrict this on a public VPS when browser clients are known. |
 | `NIM_API_BASE` | `https://integrate.api.nvidia.com/v1` | NVIDIA OpenAI-compatible endpoint. |
 | `NIM_API_KEY` | none | Required for NIM model listing, chat completions, and tests. |
 | `CHUTES_API_BASE` | `https://llm.chutes.ai/v1` | Chutes OpenAI-compatible endpoint. |
 | `CHUTES_API_KEY` | none | Required for Chutes model listing, chat completions, and tests. |
+| `TOKENROUTER_API_BASE` | `https://api.tokenrouter.com/v1` | TokenRouter OpenAI-compatible endpoint. |
+| `TOKENROUTER_API_KEY` | none | Required for TokenRouter model listing, chat completions, and tests. |
+| `INFERX_API_BASE` | `https://model.inferx.net/endpoints/v1` | InferX OpenAI-compatible endpoint. |
+| `INFERX_API_KEY` | none | Required for InferX model listing, chat completions, and tests. |
+| `INFERX_TENANT_ID` | `tn-gwigaxe616` | Sent as `X-Tenant-Id` to InferX. |
+| `BAI_API_BASE` | `https://api.b.ai/v1` | B.AI OpenAI-compatible endpoint. |
+| `BAI_API_KEY` | none | Required for B.AI model listing, chat completions, and tests. |
+| `BAI_FREE_MODELS` | `qwen3.8-flash,hy3,mimo-v2.5` | B.AI exposes no pricing metadata, so promo models are listed as free explicitly. |
 | `OLLAMA_ENABLED` | `true` | If true, tries to list and route local/self-hosted Ollama models. |
 | `OLLAMA_API_BASE` | `http://127.0.0.1:11434/v1` | Ollama OpenAI-compatible endpoint. |
 | `OLLAMA_API_KEY` | none | Optional bearer token if Ollama is behind an authenticating proxy. |
@@ -458,3 +573,23 @@ BASE_URL=http://your-server:3000 \
 | `SHOW_REASONING` | `false` | If true, exposes upstream reasoning in `<think>` tags. |
 | `ENABLE_THINKING_MODE` | `false` | Forces `chat_template_kwargs.enable_thinking=true`. |
 | `THINKING_MODELS` | none | Comma-separated public or provider model IDs that should get thinking enabled. |
+| `DEFAULT_REASONING_BUDGET` | `16384` | Reasoning token budget used when a client does not set one. |
+| `NIM_FEATURED_MODELS` | none | Comma-separated NIM model IDs surfaced as featured in the UI. |
+| `HIDDEN_PROVIDERS` | none | Comma-separated providers hidden from `/v1/models` by default. The UI provider chips override this per session. |
+| `G4F_MODEL_ALLOWLIST` | none | Intersects the live G4F `/v1/models` response with this list, to keep the picker short. |
+| `G4F_PROBE_ENABLED` | `false` | If true, probes each G4F model with a one-shot chat call and marks it healthy/unhealthy. |
+| `G4F_PROBE_TIMEOUT_MS` | `8000` | Timeout per G4F model probe. |
+| `BODY_LIMIT` | `50mb` | Max request body size for the JSON and urlencoded parsers. |
+| `RESPONSE_STATE_TTL_MS` | `3600000` | TTL for `previous_response_id` state in `/v1/responses`. State is in memory; a restart clears it. |
+| `RESPONSE_STATE_MAX` | `1000` | Max number of stitched `/v1/responses` states kept. |
+| `KEY_COOLDOWN_BASE_MS` | `10000` | Cooldown after the first `429`/`403` on a key. Doubles per retry. |
+| `KEY_COOLDOWN_MAX_MS` | `86400000` | Cap on per-key cooldown; after this the key is retested. |
+| `DEBUG_LOG_ENABLED` | `true` | Master switch for chat completion request/response logging. |
+| `DEBUG_LOG_RING_SIZE` | `250` | In-memory ring buffer size before entries are dumped to disk. |
+| `DEBUG_LOG_FILE_MAX` | `500` | Max entries kept in the dump file (FIFO). |
+| `DEBUG_LOG_FILE` | `data/debug-log.json` | Dump file path. Set empty for memory-only logging. |
+| `SESSION_SECRET` | insecure default | Express session secret. **Set this on any public deployment.** |
+
+Every provider also accepts a plural `*_API_KEYS` variant (for example
+`OPENROUTER_API_KEYS=sk-or-key1,sk-or-key2`) that takes priority over the singular key
+and enables round-robin rotation with cooldown.
