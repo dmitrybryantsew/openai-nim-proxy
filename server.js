@@ -7,6 +7,7 @@ const cors = require('cors');
 const axios = require('axios');
 const { buildOpenRouterHeaders, buildOptionalBearerHeaders, createModelRegistry } = require('./src/model-registry');
 const { ChatStore } = require('./src/chat-store');
+const { CardStore } = require('./src/card-store');
 const { KeyPool, parseKeys, maskKey } = require('./src/key-pool');
 const { DebugLogger } = require('./src/debug-log');
 const { getGoogleAuthUrl, getGoogleUserFromCode } = require('./src/auth/google');
@@ -215,6 +216,7 @@ const registry = createModelRegistry({
   openRouterAppTitle: providers.openrouter.appTitle,
 });
 const chatStore = new ChatStore(CHAT_DB_FILE);
+const cardStore = new CardStore(process.env.CARD_DB_FILE || CHAT_DB_FILE);
 
 app.disable('x-powered-by');
 app.use(cors({ origin: CORS_ORIGIN }));
@@ -664,6 +666,50 @@ app.delete('/api/chats/:id/messages/:messageId', (req, res) => {
 
   res.status(204).end();
 });
+
+// --- Card Sync and Spaced Repetition Routes ---
+app.post('/api/cards/sync', asyncHandler(async (req, res) => {
+  const result = cardStore.sync({
+    since: req.body.since || null,
+    decks: req.body.decks || [],
+    cards: req.body.cards || [],
+    reviews: req.body.reviews || [],
+    userId: req.session?.user?.id || null,
+  });
+  res.json({ object: 'card.sync', data: result });
+}));
+
+app.get('/api/cards/decks', asyncHandler(async (_req, res) => {
+  const decks = cardStore.listDecks();
+  res.json({ object: 'card.deck.list', data: decks });
+}));
+
+app.get('/api/cards/due', asyncHandler(async (req, res) => {
+  const deckId = req.query.deckId || null;
+  const limit = Math.min(Number(req.query.limit || 50), 200);
+  const cards = cardStore.getDueCards({ deckId, limit });
+  res.json({ object: 'card.due.list', data: cards });
+}));
+
+app.post('/api/cards/review', asyncHandler(async (req, res) => {
+  const { cardId, grade, userAnswer, elapsedMs } = req.body;
+  if (!cardId || grade === undefined) {
+    return res.status(400).json(openAiError('cardId and grade are required', 'invalid_request_error', 400));
+  }
+  const result = cardStore.recordReview({
+    cardId,
+    grade,
+    userAnswer,
+    elapsedMs,
+    userId: req.session?.user?.id || null,
+  });
+  res.json({ object: 'card.review', data: result });
+}));
+
+app.delete('/api/cards/decks/:id', asyncHandler(async (req, res) => {
+  cardStore.deleteDeck(req.params.id);
+  res.json({ object: 'card.deck.delete', id: req.params.id, deleted: true });
+}));
 
 app.post('/api/chats/:id/generate', asyncHandler(async (req, res) => {
   const chatId = Number(req.params.id);

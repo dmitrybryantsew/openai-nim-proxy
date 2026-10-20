@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Flashcards Study Hub</title>
+    <link rel="stylesheet" href="/styles.css">
+    <style>
+      .card-shell { max-width: 720px; margin: 0 auto; padding: 1.5rem 1rem; }
+      .card-box {
+        background: var(--bg-card, #1e1e1e);
+        border: 1px solid var(--border, #333);
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin: 1.2rem 0;
+        min-height: 220px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+      }
+      .card-question { font-size: 1.15rem; line-height: 1.5; margin-bottom: 1rem; white-space: pre-wrap; }
+      .card-answer {
+        margin-top: 1.2rem;
+        padding-top: 1.2rem;
+        border-top: 1px dashed var(--border, #444);
+        font-size: 1.05rem;
+        color: #8be9fd;
+        white-space: pre-wrap;
+      }
+      .grade-bar {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+        margin-top: 1.2rem;
+      }
+      .grade-btn {
+        flex: 1;
+        min-width: 80px;
+        padding: 0.75rem 0.5rem;
+        border-radius: 8px;
+        font-weight: 600;
+        cursor: pointer;
+        border: none;
+        transition: transform 0.1s, opacity 0.2s;
+      }
+      .grade-btn:active { transform: scale(0.97); }
+      .grade-0 { background: #e63946; color: white; }
+      .grade-1 { background: #f4a261; color: black; }
+      .grade-2 { background: #e9c46a; color: black; }
+      .grade-3 { background: #2a9d8f; color: white; }
+      .grade-4 { background: #52b788; color: white; }
+      .choice-list { display: flex; flex-direction: column; gap: 0.5rem; margin: 1rem 0; }
+      .choice-item {
+        padding: 0.75rem 1rem;
+        background: rgba(255,255,255,0.05);
+        border: 1px solid var(--border, #444);
+        border-radius: 8px;
+        cursor: pointer;
+        text-align: left;
+      }
+      .choice-item:hover { background: rgba(255,255,255,0.1); }
+      .deck-badge {
+        font-size: 0.85rem;
+        padding: 0.2rem 0.6rem;
+        border-radius: 6px;
+        background: #3a3a3a;
+        color: #aaa;
+      }
+      .audio-btn {
+        background: transparent;
+        border: 1px solid var(--border, #555);
+        color: #eee;
+        padding: 0.4rem 0.8rem;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 0.9rem;
+      }
+      .hidden { display: none !important; }
+    </style>
+  </head>
+  <body>
+    <main class="card-shell">
+      <header class="tts-header">
+        <div>
+          <h1>Flashcards Study Hub</h1>
+          <p>Sync and review Obsidian flashcards on any device</p>
+        </div>
+        <div style="display:flex; gap:0.5rem; align-items:center;">
+          <a class="nav-link" href="/tools.html">Tools</a>
+        </div>
+      </header>
+
+      <!-- API Key Section -->
+      <section class="section" style="margin-bottom: 1rem;">
+        <div style="display: flex; gap: 0.5rem; align-items: center;">
+          <input type="password" id="apiKeyInput" placeholder="Proxy API key (or sign in via Google)" style="flex:1;">
+          <button id="saveKeyBtn" class="primary-btn">Save Key</button>
+        </div>
+      </section>
+
+      <!-- Deck Selection -->
+      <section id="deckSelectSection" class="section">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.8rem;">
+          <h2>Your Study Decks</h2>
+          <button id="refreshDecksBtn" class="audio-btn">Refresh</button>
+        </div>
+        <div id="deckList" class="tools-grid">
+          <p style="color:#888;">Loading decks from server...</p>
+        </div>
+      </section>
+
+      <!-- Study Session View -->
+      <section id="studySection" class="section hidden">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <span id="currentDeckBadge" class="deck-badge">Deck</span>
+            <span id="cardProgress" style="margin-left:0.5rem; font-size:0.9rem; color:#aaa;">Card 0 of 0</span>
+          </div>
+          <div style="display:flex; gap:0.5rem;">
+            <button id="speakBtn" class="audio-btn" title="Speak question aloud">Speak</button>
+            <button id="exitStudyBtn" class="audio-btn">Back to Decks</button>
+          </div>
+        </div>
+
+        <div class="card-box">
+          <div>
+            <div id="cardQuestionName" style="font-size:0.85rem; color:#888; margin-bottom:0.4rem;"></div>
+            <div id="cardQuestionText" class="card-question"></div>
+            <div id="cardChoices" class="choice-list hidden"></div>
+            <div id="typedInputContainer" class="hidden" style="margin: 1rem 0;">
+              <input type="text" id="typedAnswerInput" placeholder="Type your answer here..." style="width:100%; padding:0.6rem;">
+            </div>
+          </div>
+
+          <div>
+            <button id="showAnswerBtn" class="primary-btn" style="width:100%; margin-top:1rem;">Show Answer</button>
+
+            <div id="answerArea" class="hidden">
+              <div id="cardAnswerText" class="card-answer"></div>
+              <div class="grade-bar">
+                <button class="grade-btn grade-0" data-grade="0">Again (0)</button>
+                <button class="grade-btn grade-1" data-grade="1">Hard (1)</button>
+                <button class="grade-btn grade-2" data-grade="2">Good (2)</button>
+                <button class="grade-btn grade-3" data-grade="3">Easy (3)</button>
+                <button class="grade-btn grade-4" data-grade="4">Perfect (4)</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Finished Session View -->
+      <section id="finishedSection" class="section hidden" style="text-align:center; padding: 2rem 1rem;">
+        <h2>Session Complete!</h2>
+        <p style="color:#aaa; margin: 1rem 0;">All due cards in this deck have been reviewed.</p>
+        <button id="backToDecksBtn" class="primary-btn">Return to Decks</button>
+      </section>
+    </main>
+
+    <script src="/cards.js"></script>
+  </body>
+</html>
