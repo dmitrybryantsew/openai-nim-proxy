@@ -40,7 +40,8 @@ class NoteStore {
   }
 
   static hashContent(content) {
-    return crypto.createHash('sha256').update(content || '', 'utf8').digest('hex');
+    const normalized = (content || '').replace(/\r\n/g, '\n');
+    return crypto.createHash('sha256').update(normalized, 'utf8').digest('hex');
   }
 
   _queryServerNotes(userId = null) {
